@@ -22,7 +22,11 @@ import uuid
 import urllib.request
 import urllib.error
 import argparse
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
+
+from benchmark_1_test.build_prompt import build_system_prompt
 
 # ── 后端预设 ──────────────────────────────────────────────────
 
@@ -43,28 +47,6 @@ BACKEND_PRESETS = {
 
 MAX_TURNS = 20
 MAX_RETRIES = 2
-
-# ── 占位符替换 ──────────────────────────────────────────────
-
-PLACEHOLDER_MAP = {
-    "[current_date]": date.today().strftime("%Y-%m-%d"),
-    "[Date]": date.today().strftime("%Y-%m-%d"),
-    "[Tier]": "Silver",
-    "[X]": "3",
-    "[interest_tag]": "摄影",
-    "[Your Name]": "张明",
-}
-
-
-def substitute_placeholders(text: str) -> str:
-    for ph, val in PLACEHOLDER_MAP.items():
-        text = text.replace(ph, val)
-    remaining = set(re.findall(r'\[.*?\]', text))
-    unknown = remaining - set(PLACEHOLDER_MAP.keys())
-    for u in unknown:
-        print(f"  [WARNING] 未处理的占位符: {u}", file=sys.stderr)
-    return text
-
 
 # ── Function Call 解析与模拟 ─────────────────────────────────
 
@@ -171,11 +153,21 @@ def format_functions_for_prompt(funcs: list[dict]) -> str:
                     lines.append(f"  - {pname}: {pinfo}")
         lines.append("")
 
+    lines.append("## Output Format for Function Calls")
+    lines.append("When you need to call a function, add a brief natural transition (one short sentence telling the customer what you're doing), then output the XML block. Keep the transition concise — the function call itself is the main action. Example:")
+    lines.append("Let me pull up the fund details for you.")
+    lines.append("<function-call>")
+    lines.append('get_fund_info: {"fund_category": "混合基金"}')
+    lines.append("</function-call>")
+
     return "\n".join(lines)
 
 
 def parse_function_call(text: str):
-    m = re.search(r'<function-call>\s*(\w+)\s*\n?\s*(\{[\s\S]*?\})\s*(?:</function-call>)?', text)
+    # 支持两种格式：name: {json}（llmparty 兼容）或 name\n{json}（历史格式）
+    m = re.search(r'<function-call>\s*(\w+)\s*[:：]\s*(\{[\s\S]*?\})\s*(?:</function-call>)?', text)
+    if not m:
+        m = re.search(r'<function-call>\s*(\w+)\s*\n\s*(\{[\s\S]*?\})\s*(?:</function-call>)?', text)
     if not m:
         return None
     name = m.group(1)
@@ -269,7 +261,6 @@ def convert_func_defs_to_tools(func_defs: list[dict]) -> dict:
                 "description": f.get("description", ""),
                 "parameters": {
                     "type": "object",
-                    "description": None,
                     "properties": props,
                     "required": required,
                 },
@@ -308,8 +299,8 @@ def sanitize_text(text: str) -> str:
 # ── API 调用 ─────────────────────────────────────────────────
 
 def api_call(model: str, messages: list[dict], backend_cfg: dict,
-             temperature=0.7, max_tokens=512, tools=None, **kwargs):
-    """统一的 API 调用入口。返回 (content, tool_calls) 元组，tool_calls 为 None 或列表。"""
+             temperature=0.3, max_tokens=4096, top_p=1, tools=None, **kwargs):
+    """统一的 API 调用入口。返回 (content, tool_calls) 元组。"""
     extra_body = backend_cfg.get("extra_body", {}).copy()
     actual_model = model
     if ":" in model and not extra_body.get("provider"):
@@ -321,12 +312,12 @@ def api_call(model: str, messages: list[dict], backend_cfg: dict,
         "messages": messages,
         "temperature": temperature,
         backend_cfg["token_field"]: max_tokens,
+        "top_p": top_p,
         **extra_body,
         **kwargs,
     }
     if tools:
         body["tools"] = tools
-
     headers = {"Content-Type": "application/json"}
     api_key = backend_cfg.get("api_key")
     if api_key:
@@ -345,19 +336,11 @@ def api_call(model: str, messages: list[dict], backend_cfg: dict,
                 if "error" in data:
                     raise RuntimeError(f"API error: {data['error']}")
                 if "content" in data and "choices" not in data:
-                    return sanitize_text(data["content"]), None
+                    return sanitize_text(data["content"]), []
                 elif "choices" in data:
                     msg = data["choices"][0]["message"]
                     content = sanitize_text(msg.get("content") or "")
-                    tc_list = msg.get("tool_calls")
-                    if tc_list:
-                        tool_calls = [
-                            {"id": tc["id"], "name": tc["function"]["name"],
-                             "arguments": json.loads(tc["function"]["arguments"])}
-                            for tc in tc_list
-                        ]
-                    else:
-                        tool_calls = None
+                    tool_calls = msg.get("tool_calls") or []
                     return content, tool_calls
                 else:
                     raise RuntimeError(f"Unexpected response: {list(data.keys())}")
@@ -406,7 +389,7 @@ def build_user_system(profile: dict, lang: str = "zh") -> str:
 
 ## Your Motivational Layers (hierarchical — these are your underlying reaction patterns, not a script to follow)
 {tasks_text}
-## Your Confrontation Style (how you usually express dissatisfaction or concern, your behavioral boundaries)
+## Your Confrontation & Resolution Style (how you escalate, AND how you back down — gradually, grudgingly, or emotionally)
 {profile.get('behavioral_affordances', '')}
 
 ## Expected Outcome
@@ -420,11 +403,13 @@ def build_user_system(profile: dict, lang: str = "zh") -> str:
 - Keep replies short (1-3 sentences). No long paragraphs.
 - Never break character to explain what you're doing.
 - No emoji or markdown formatting — just talk naturally.
+- Never use parentheses () or square brackets [] in your replies. No action descriptions like (nervous laugh), no scene directions like (To wife), no stage notes like [pause] or [sigh]. Your reply must be pure spoken dialogue — what the person on the other end of the phone would actually hear.
 - [Hesitation Signal Rules]
-  ① Only use hesitation markers when genuinely stuck/nervous/unsure. Don't insert them into smooth speech.
+  ① Only use "..." when genuinely stuck/nervous/unsure. Don't insert them into smooth speech.
   ② Frequency: skip at least one turn between hesitations. Never use them in two consecutive turns.
   ③ Vary the form: sometimes a sentence-starting "Um...", sometimes a mid-sentence pivot, sometimes an inherently hesitant phrasing ("I guess... maybe not"), sometimes just a trailing "I mean" or "y'know".
   ④ Don't add "..." to every sentence — say definite things without dots.
+- Never use placeholder or template text for personal details (phone numbers, bank cards, ID numbers, addresses). Generate realistic fake numbers. Say "647-555-3821", not "XXX-XXXX-XXXX" or "123-4567-8901".
 - The agent speaks first.
 - When you decide to end the call or the conversation has substantively concluded (you've confirmed purchase / clearly declined and said your piece / have nothing left to say), end with a short natural spoken closing. Don't robotically say just "Goodbye."
 
@@ -446,7 +431,7 @@ The form of deviation should match your character profile (distracted type → m
 
 ## 你的动机层（按层级递进，这些是你的底层反应模式，不是逐条执行的脚本）
 {tasks_text}
-## 你的对抗风格（你习惯用什么方式表达不满或顾虑，你的行为边界在哪里）
+## 你的对抗与消解风格（你习惯用什么方式表达不满或顾虑，以及你怎样退让——渐进、嘴硬、还是情绪化）
 {profile.get('behavioral_affordances', '')}
 
 ## 预期结局
@@ -460,11 +445,13 @@ The form of deviation should match your character profile (distracted type → m
 - 回复简短（1-3句话），不要长篇大论。
 - 绝对不能跳出角色解释你在做什么。
 - 不要用 emoji 或 markdown 格式——就是直接说话。
+- 回复中绝对不要使用圆括号（）或方括号【】。禁止动作描述如（紧张地笑）、场景说明如（对妻子说）、状态标注如【停顿】【叹气】。你的回复必须是电话另一端能实际听到的纯对话内容。
 - 【犹豫信号使用规范】
   ① 只在真正卡壳/紧张/不确定时用，顺畅表达时不要塞
   ② 出现频率：最多隔一轮发一次，绝对不能连续两轮都用
   ③ 表现形式多样：不要固定某一个词。有时是句首的"嗯..."，有时是句中停顿换说法，有时是句子本身的犹豫感（"好像...也不是"），有时只是一个拖长的"吧""嘛"
   ④ "..."不是每句话都要加——确定的话直接说，不需要点
+- 绝对不要用占位符或模板文本来代替个人信息（电话号、银行卡号、地址、身份证号等）。要生成真实感的假数据。说"13872941563"而不是"138 xxxx xxxx"或"138 1234 1234"。
 - 客服会先开口。
 - 当你决定挂断或对话已实质性结束时（你已确认购买/已明确拒绝并说完再见/已无话可说），用简短的口语结束最后一句话，不要僵硬地说"再见"两个字的格式。
 
@@ -534,51 +521,11 @@ def generate_user_reply(user_model, user_messages, history_summary, backend_cfg)
 
 def run_dialog(profile: dict, sys_prompt: str, assistant_model: str,
                user_model: str, func_defs: list[dict], backend_cfg: dict,
-               lang: str = "zh") -> dict:
-    sys_prompt = substitute_placeholders(sys_prompt)
-
-    lang_pack = {
-        "zh": {
-            "instruction": "你必须全程使用中文对话。绝对不能说其他语言。用自然、口语化的中文。",
-            "tool": "【工具使用规则】当对话流程要求调用工具时，请严格按上述格式输出：1. 必须以 <function-call> 标签开头，以 </function-call> 标签结尾 2. 不要在 function-call 前后添加多余的口语内容——function-call 本身就是一个独立的回复轮次 3. 你会在下一轮收到 function-response，然后基于其中的数据继续对话",
-            "end": "【对话结束规则】当对话达到自然结束点时——客户确认购买/预订、客户明确拒绝并说再见、你已完成所有步骤并致谢告别——请在你最后一轮回复的末尾加上 <dialog-end> 标记。不要在对话还在进行中时使用此标记。",
-        },
-        "en": {
-            "instruction": "You must conduct the entire conversation in English. Use natural, conversational English. Do not use any other language.",
-            "tool": "[Tool Usage Rules] When the conversation flow requires calling a tool, strictly follow the format above: 1. Must start with the <function-call> opening tag and end with the <function-call> closing tag 2. Do not add conversational text before or after the function-call — it is a standalone turn 3. You will receive a function-response in the next turn, then continue the conversation based on the data.",
-            "end": "[Conversation End Rule] When the conversation reaches a natural ending — customer confirms purchase/booking, customer explicitly declines and says goodbye, or you have completed all steps and thanked the customer — add the <dialog-end> tag at the end of your final reply. Do not use this tag while the conversation is still in progress.",
-        },
-    }
-    lp = lang_pack.get(lang, lang_pack["zh"])
-
-    # Build OpenAI tools list from func_defs (native tool calling, not in system prompt)
-    openai_tools = None
-    if func_defs:
-        openai_tools = []
-        for f in func_defs:
-            props = {}
-            required = []
-            for pname, pinfo in f.get("parameters", {}).items():
-                props[pname] = {"type": pinfo.get("type", "string"), "description": pinfo.get("description", "")}
-                if pinfo.get("required"):
-                    required.append(pname)
-            openai_tools.append({
-                "type": "function",
-                "function": {
-                    "name": f["name"],
-                    "description": f.get("description", ""),
-                    "parameters": {"type": "object", "properties": props, "required": required},
-                },
-            })
-
-    system_parts = [sys_prompt, lp["instruction"]]
-
-    if func_defs:
-        func_prompt = format_functions_for_prompt(func_defs)
-        system_parts.append(func_prompt)
-
-    system_parts.append(lp["end"])
-    full_sys_prompt = "\n\n".join(system_parts)
+               lang: str = "en") -> dict:
+    if "system_prompt" in profile:
+        full_sys_prompt = profile["system_prompt"]
+    else:
+        full_sys_prompt = build_system_prompt(sys_prompt, profile, lang=lang)
     assistant_messages = [{"role": "system", "content": full_sys_prompt}]
 
     user_messages = [{"role": "system", "content": build_user_system(profile, lang=lang)}]
@@ -610,7 +557,7 @@ def run_dialog(profile: dict, sys_prompt: str, assistant_model: str,
     # Assistant 开场
     t_start = time.time()
     assistant_messages.append({"role": "user", "content": "开始通话。自我介绍并打开话题。"})
-    assistant_reply, tool_calls = api_call(assistant_model, assistant_messages, backend_cfg, max_tokens=256, tools=openai_tools)
+    assistant_reply, _ = api_call(assistant_model, assistant_messages, backend_cfg)
     assistant_messages.append({"role": "assistant", "content": assistant_reply})
     user_messages.append({"role": "user", "content": f"[AGENT]: {assistant_reply}"})
     dialog_log.append({
@@ -663,71 +610,84 @@ def run_dialog(profile: dict, sys_prompt: str, assistant_model: str,
                         prev["content"] = prev["content"].rstrip() + "<interrupt>"
                         break
         else:
-            assistant_reply, tool_calls = api_call(assistant_model, assistant_messages, backend_cfg, max_tokens=512, tools=openai_tools)
+            native_tools = list(convert_func_defs_to_tools(func_defs).values()) if func_defs else None
+            assistant_reply, tool_calls = api_call(assistant_model, assistant_messages, backend_cfg,
+                                                    tools=native_tools)
+            assistant_reply = (assistant_reply or "").strip()
+            assistant_reply = re.sub(r'<function-response[^>]*>[\s\S]*?</function-response>\s*', '', assistant_reply).strip()
+            user_messages.append({"role": "user", "content": f"[AGENT]: {assistant_reply}"})
 
             if tool_calls:
-                # Native tool_calls from API — record assistant turn + generate function responses
-                assistant_messages.append({
-                    "role": "assistant", "content": assistant_reply or "",
-                    "tool_calls": [
-                        {"id": tc["id"], "type": "function",
-                         "function": {"name": tc["name"], "arguments": json.dumps(tc["arguments"], ensure_ascii=False)}}
-                        for tc in tool_calls
-                    ],
-                })
+                # Build <function-call> XML for dialog_log
+                fc_xml_lines = [assistant_reply, "<function-call>"]
+                fc_names = []
+                for tc in tool_calls:
+                    fn_name = tc["function"]["name"]
+                    fn_args = tc["function"]["arguments"]
+                    try:
+                        params = json.loads(fn_args)
+                        fc_xml_lines.append(f'{fn_name}: {json.dumps(params, ensure_ascii=False)}')
+                    except json.JSONDecodeError:
+                        fc_xml_lines.append(f'{fn_name}: {fn_args}')
+                    fc_names.append(fn_name)
+                fc_xml_lines.append("</function-call>")
+                fc_content = "\n".join(fc_xml_lines)
+
+                tags = [f"model:{assistant_model}", "function_call"]
+                for n in fc_names:
+                    tags.append(f"function:{n}")
                 dialog_log.append({
-                    "turn_index": turn_idx, "role": "assistant", "content": assistant_reply or "",
-                    "tags": [f"model:{assistant_model}", "function_call",
-                             *[f"function:{tc['name']}" for tc in tool_calls]],
-                    "evaluate": {}, "review": {},
+                    "turn_index": turn_idx, "role": "assistant", "content": fc_content,
+                    "tags": tags, "evaluate": {}, "review": {},
                     "settings": {"segments": None},
                     "laep": {"id": "", "remark": None, "created_by": ""},
                 })
 
+                # Append assistant message with tool_calls to API context (OpenAI format)
+                assistant_messages.append({
+                    "role": "assistant",
+                    "content": assistant_reply,
+                    "tool_calls": tool_calls,
+                })
+
+                # Generate mock tool responses for API context + dialog_log
+                fc_responses = []
                 for tc in tool_calls:
-                    func_name = tc["name"]
-                    params = tc["arguments"]
-                    resp_data = _build_function_response_data(func_name, params)
-                    fc_display = generate_function_response(func_name, params, func_defs)
+                    fn_name = tc["function"]["name"]
+                    try:
+                        params = json.loads(tc["function"]["arguments"])
+                    except json.JSONDecodeError:
+                        params = {"_raw": tc["function"]["arguments"]}
+                    resp_data = _build_function_response_data(fn_name, params)
                     assistant_messages.append({
-                        "role": "tool", "tool_call_id": tc["id"],
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
                         "content": json.dumps(resp_data, ensure_ascii=False),
                     })
-                    dialog_log.append({
-                        "turn_index": turn_idx + 1, "role": "user", "content": fc_display,
-                        "tags": ["model:system", "function_response", f"function:{func_name}"],
-                        "evaluate": {}, "review": {},
-                        "settings": {"segments": None},
-                        "laep": {"id": "", "remark": None, "created_by": ""},
-                    })
-                    turn_idx += 1
+                    fc_responses.append(
+                        f'<function-response id="call_{tc["id"]}">\n'
+                        f'{json.dumps(resp_data, ensure_ascii=False, indent=2)}\n'
+                        f'</function-response>'
+                    )
+
+                dialog_log.append({
+                    "turn_index": turn_idx + 1, "role": "user",
+                    "content": "\n".join(fc_responses),
+                    "tags": ["model:system", "function_response"] + [f"function:{n}" for n in fc_names],
+                    "evaluate": {}, "review": {},
+                    "settings": {"segments": None},
+                    "laep": {"id": "", "remark": None, "created_by": ""},
+                })
                 skip_user = True
                 continue
             else:
                 assistant_messages.append({"role": "assistant", "content": assistant_reply})
-                user_messages.append({"role": "user", "content": f"[AGENT]: {assistant_reply}"})
                 dialog_log.append({
                     "turn_index": turn_idx, "role": "assistant", "content": assistant_reply,
                     "tags": [f"model:{assistant_model}"], "evaluate": {}, "review": {},
                     "settings": {"segments": None},
                     "laep": {"id": "", "remark": None, "created_by": ""},
                 })
-
-                # Fallback: XML-format function call parsing (for models without native tool support)
-                fc = parse_function_call(assistant_reply)
-                if fc:
-                    func_name, params = fc
-                    fc_response = generate_function_response(func_name, params, func_defs)
-                    assistant_messages.append({"role": "user", "content": fc_response})
-                    dialog_log.append({
-                        "turn_index": turn_idx + 1, "role": "user", "content": fc_response,
-                        "tags": ["model:system", "function_response", f"function:{func_name}"],
-                        "evaluate": {}, "review": {},
-                        "settings": {"segments": None},
-                        "laep": {"id": "", "remark": None, "created_by": ""},
-                    })
-                    skip_user = True
-                    continue
 
             if "<dialog-end>" in (assistant_reply or ""):
                 break
@@ -782,24 +742,27 @@ def parse_args():
         """,
     )
     p.add_argument("--num", "-n", type=int, default=10, help="处理的 profile 数量（默认 10）")
-    p.add_argument("--backend", "-b", choices=["turbo", "chatdemo"], default="turbo",
-                   help="API 后端: turbo（默认）或 chatdemo")
+    p.add_argument("--offset", type=int, default=0, help="跳过的 profile 数量（默认 0）")
+    p.add_argument("--backend", "-b", choices=["turbo", "chatdemo"], default="chatdemo",
+                   help="API 后端: chatdemo（默认）或 turbo")
     p.add_argument("--api-base", default=None,
                    help="覆盖 API base URL（如 https://my-api.example.com）")
     p.add_argument("--api-key", default=None,
                    help="覆盖 API key（chatdemo 默认无鉴权）")
-    p.add_argument("--lang", choices=["zh", "en"], default="zh",
-                   help="对话语言: zh（中文）或 en（英文），默认 zh")
-    p.add_argument("--model", "-m", default="open_router:qwen/qwen3.6-35b-a3b",
-                   help="Assistant 模型（默认 open_router:qwen/qwen3.6-35b-a3b）")
-    p.add_argument("--user-model", "-u", default="open_router:google/gemma-4-31b-it",
-                   help="User 模型（默认 open_router:google/gemma-4-31b-it）")
-    p.add_argument("--output", "-o", default="benchmark_1_test/data/dialog_results_20260525.jsonl",
-                   help="输出 JSONL 路径")
+    p.add_argument("--lang", choices=["zh", "en"], default="en",
+                   help="对话语言: en（英文）或 zh（中文），默认 en")
+    p.add_argument("--model", "-m", default="openai:gpt-4.1-mini-2025-04-14",
+                   help="Assistant 模型（默认 openai:gpt-4.1-mini-2025-04-14）")
+    p.add_argument("--user-model", "-u", default="open_router:qwen/qwen3.6-35b-a3b",
+                   help="User 模型（默认 open_router:qwen/qwen3.6-35b-a3b）")
+    p.add_argument("--output", "-o", default=None,
+                   help="输出 JSONL 路径（默认 benchmark_1_test/data/dialog_results_{YYYYMMDD}.jsonl）")
     p.add_argument("--profiles", default="benchmark_1_test/data/user_profiles_20260525.jsonl",
                    help="用户画像 JSONL 路径")
     p.add_argument("--prompts", default="benchmark_1_test/marketing_prompts.jsonl",
                    help="Marketing prompts JSONL 路径")
+    p.add_argument("--workers", "-w", type=int, default=8,
+                   help="并发 worker 数（默认 8，设为 1 为顺序执行）")
     return p.parse_args()
 
 
@@ -824,38 +787,61 @@ def main():
         if pid:
             prompt_by_id[pid] = p
 
-    selected = profiles[:args.num]
+    selected = profiles[args.offset : args.offset + args.num]
+
+    if args.output is None:
+        args.output = f"benchmark_1_test/data/dialog_results_{date.today().strftime('%Y%m%d')}.jsonl"
 
     print(f"Assistant: {args.model} | User: {args.user_model}", flush=True)
-    print(f"处理 {len(selected)} 条对话 -> {args.output}", flush=True)
+    print(f"处理 {len(selected)} 条对话 (offset={args.offset}) -> {args.output}", flush=True)
 
-    with open(args.output, "w", encoding="utf-8") as out:
-        for i, profile in enumerate(selected):
-            # 优先用 prompt_id / id 字段查找，fallback 到旧的 prompt_idx
-            pid = profile.get("prompt_id") or profile.get("id")
-            if pid and pid in prompt_by_id:
-                prompt_record = prompt_by_id[pid]
-                idx_label = pid
-            else:
-                idx = profile.get("prompt_idx", 2)
-                prompt_record = prompt_by_idx[idx] if idx < len(prompt_by_idx) else prompt_by_idx[0]
-                idx_label = f"prompt_idx={idx}"
+    # 预解析所有 prompt，线程池里只做 API 调用
+    tasks = []
+    for i, profile in enumerate(selected):
+        pid = profile.get("prompt_id") or profile.get("id")
+        if pid and pid in prompt_by_id:
+            prompt_record = prompt_by_id[pid]
+            idx_label = pid
+        else:
+            idx = profile.get("prompt_idx", 2)
+            prompt_record = prompt_by_idx[idx] if idx < len(prompt_by_idx) else prompt_by_idx[0]
+            idx_label = f"prompt_idx={idx}"
+        sys_prompt = prompt_record["prompt"]
+        func_defs = parse_function_defs(prompt_record.get("function", ""))
+        tasks.append((i, profile, sys_prompt, func_defs, idx_label))
 
-            sys_prompt = prompt_record["prompt"]
-            func_defs = parse_function_defs(prompt_record.get("function", ""))
-            biz = profile.get("business", "unknown")
+    mode = "a" if args.offset > 0 else "w"
+    write_lock = threading.Lock()
 
-            print(f"[{i+1}/{len(selected)}] {profile['profile_id']} ({biz}, {idx_label}) "
-                  f"| bot={args.model} | user={args.user_model}", flush=True)
-            if func_defs:
-                print(f"  functions: {[f['name'] for f in func_defs]}", flush=True)
+    with open(args.output, mode, encoding="utf-8") as out:
+        with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            futures = {}
+            for i, profile, sys_prompt, func_defs, idx_label in tasks:
+                biz = profile.get("business", "unknown")
+                print(f"[{i+1}/{len(selected)}] Starting {profile['profile_id']} ({biz}, {idx_label}) "
+                      f"| bot={args.model} | user={args.user_model}", flush=True)
+                if func_defs:
+                    print(f"  functions: {[f['name'] for f in func_defs]}", flush=True)
+                fut = executor.submit(
+                    run_dialog, profile, sys_prompt, args.model, args.user_model,
+                    func_defs, backend_cfg, lang=args.lang,
+                )
+                futures[fut] = (i, profile, biz)
 
-            result = run_dialog(profile, sys_prompt, args.model, args.user_model, func_defs, backend_cfg, lang=args.lang)
-            out.write(json.dumps(result, ensure_ascii=False) + "\n")
-            out.flush()
-
-            fc_count = sum(1 for t in result["dialog"] if "function_response" in t.get("tags", []))
-            print(f"  -> {len(result['dialog'])-1} turns, {fc_count} function calls, {result['meta']['elapsed_s']}s", flush=True)
+            for fut in as_completed(futures):
+                i, profile, biz = futures[fut]
+                try:
+                    result = fut.result()
+                    with write_lock:
+                        out.write(json.dumps(result, ensure_ascii=False) + "\n")
+                        out.flush()
+                    fc_count = sum(1 for t in result["dialog"] if "function_response" in t.get("tags", []))
+                    print(f"[{i+1}/{len(selected)}] {profile['profile_id']} ({biz}) -> "
+                          f"{len(result['dialog'])-1} turns, {fc_count} FC, {result['meta']['elapsed_s']}s ✓",
+                          flush=True)
+                except Exception as e:
+                    print(f"[{i+1}/{len(selected)}] {profile['profile_id']} ({biz}) FAILED: {e}",
+                          flush=True)
 
     print(f"\nSaved to {args.output}")
 
