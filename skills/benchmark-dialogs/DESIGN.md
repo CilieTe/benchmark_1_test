@@ -403,9 +403,370 @@ Failure checks:
 
 Purpose: run two-model simulations from runtime profiles and prompts.
 
-First implementation may wrap the existing `run_dialogs.py`. Domain-specific
-profile schemas should not be passed directly to the runner; use
-`profiles_runtime.jsonl`.
+`run-dialogs` is not just a thin process wrapper. It owns the simulation
+protocol, output contract, and the first layer of automatic evaluation. The
+existing `run_dialogs.py` is the first implementation target because it already
+contains most of the runner mechanics: two isolated model contexts, function
+calling, mock function responses, interruption marking, dialog-end handling, and
+compress-style output.
+
+Domain-specific native profile schemas should not be passed directly to the
+runner. Always pass `profiles_runtime.jsonl`.
+
+### Inputs
+
+Minimum inputs:
+
+- `profiles_runtime.jsonl`
+- prompts JSONL
+- assistant model
+- user model
+- backend
+- language
+- output path
+
+Optional inputs:
+
+- run ID / experiment ID
+- judge model
+- evaluator rubric
+- max turns
+- worker count
+- resume offset
+- random seed, if the backend supports deterministic settings
+
+### Runtime Profile Contract
+
+The runner consumes the runtime profile contract from `generate-profiles`:
+
+```json
+{
+  "profile_id": "...",
+  "prompt_id": "...",
+  "identity": {},
+  "persona": "...",
+  "situation": "...",
+  "task_instructions": [],
+  "behavioral_affordances": [],
+  "behavior_examples": [],
+  "ending_expected": "...",
+  "meta": {
+    "domain": "...",
+    "difficulty": "...",
+    "user_starting_position": "...",
+    "convertibility_ceiling": "...",
+    "resolution_style": "..."
+  }
+}
+```
+
+Adapters may pass through extra fields, but the runner should not rely on
+domain-native fields that are absent from this contract.
+
+### Two-Model Simulation Protocol
+
+The simulation uses two independent message histories:
+
+- Assistant context: system prompt from the benchmark prompt, with identity
+  placeholders filled from `profile.identity`, plus tool/function instructions.
+- User context: user simulator system prompt built from the runtime profile.
+
+The user model never sees the assistant system prompt or hidden tool definitions
+except through the assistant's spoken messages. The assistant model never sees
+the full user profile except through the user's spoken replies.
+
+The assistant speaks first. The opening user input should be a minimal start
+signal such as "start the call" rather than a scripted user utterance.
+
+Each user turn should be generated with two layers:
+
+1. Internal annotation for audit, such as active motivation, trigger, and
+   transition from previous turn.
+2. Spoken reply only, used as the actual dialog content.
+
+Only the spoken reply is fed back into the assistant context. Internal
+annotations are stored in `laep.remark` or a sidecar trace field for auditing.
+
+### Turn Loop
+
+Recommended loop:
+
+1. Build assistant system prompt from prompt + identity + tools.
+2. Build user simulator system prompt from runtime profile.
+3. Ask assistant to open the call.
+4. Alternate user and assistant turns.
+5. If assistant emits a tool/function call, inject a mock function response and
+   skip the next user turn so the assistant can continue from the tool result.
+6. Stop on `<dialog-end>`, max turns, or unrecoverable API failure.
+
+The output must preserve every actual turn with continuous `turn_index`.
+Function responses should appear as system-generated turns tagged with
+`function_response`.
+
+### Function-Call Handling
+
+The runner should support:
+
+- prompt-defined function/tool schemas
+- assistant native tool calls when the backend supports them
+- text fallback format such as `<function-call>...</function-call>`
+- mock function response generation
+- function-call and function-response tags in the dialog log
+
+Function-call evaluation is separate from simulation and should not block dialog
+generation unless a malformed tool call prevents continuation.
+
+Minimum function-call metadata:
+
+```json
+{
+  "function_name": "...",
+  "arguments": {},
+  "parse_status": "ok",
+  "response_status": "ok"
+}
+```
+
+### Output Contract
+
+Primary output is JSONL, one dialog per line.
+
+Minimum record shape:
+
+```json
+{
+  "id": "profile_id",
+  "type": "compress",
+  "dialog": [],
+  "tools": {},
+  "meta": {
+    "domain": "...",
+    "chat_lang": "en",
+    "prompt_id": "...",
+    "business": "...",
+    "assistant_model": "...",
+    "user_model": "...",
+    "backend": "chatdemo",
+    "difficulty": "...",
+    "user_starting_position": "...",
+    "convertibility_ceiling": "...",
+    "ending_expected": "...",
+    "elapsed_s": 0.0,
+    "run_id": "..."
+  },
+  "run": {
+    "status": "ok",
+    "max_turns_hit": false,
+    "api_errors": [],
+    "function_call_count": 0
+  },
+  "evaluation": null
+}
+```
+
+The existing `run_dialogs.py` already writes compress-like records. The wrapper
+should gradually add missing `meta`, `run`, and `evaluation` fields without
+breaking existing downstream consumers.
+
+### Evaluation Layers
+
+Evaluation must be separated into layers so teams can run cheap checks first and
+LLM judges only when needed.
+
+#### Layer 0: Structural Validation
+
+No LLM required.
+
+Checks:
+
+- JSONL parses.
+- `dialog` is non-empty.
+- `turn_index` is continuous.
+- `turn 0` is system.
+- Required `meta` fields exist.
+- `profile_id` and `prompt_id` are present.
+- Function-call tags and function-response tags are paired where required.
+- No unclosed `<function-call>`, `<function-response>`, or `<dialog-end>` tags.
+- Conversation ended by `<dialog-end>` or has an explicit max-turn stop reason.
+
+Output:
+
+```text
+dialog_validate_report.md
+dialog_validate_failed.jsonl
+```
+
+#### Layer 1: Deterministic Behavior Checks
+
+Mostly rule-based, with optional lightweight classifiers.
+
+Checks:
+
+- Language matches `meta.chat_lang`.
+- User simulator did not leak internal annotations in spoken content.
+- Assistant did not output tool responses as if speaking to the user.
+- Assistant did not keep talking after a clear terminal state.
+- User difficulty behavior is plausible:
+  - `L1` has no proactive adversarial behavior.
+  - `L2` adversarial behavior resolves within one to two turns unless another
+    adversarial action starts.
+  - `L3` does not self-resolve unless the assistant responds effectively.
+- Runtime profile constraints are visible in the dialog.
+- `convertibility_ceiling` is not exceeded. For example, a profile with an
+  impossible conversion ceiling should not become a clean success.
+
+Output:
+
+```text
+dialog_rule_qc.md
+dialog_rule_failed.jsonl
+```
+
+#### Layer 2: LLM Judge
+
+Use an evaluator model to judge semantic outcomes and policy/process compliance.
+This should be optional because it is slower and more expensive.
+
+Judge inputs:
+
+- prompt/system instructions used by assistant
+- runtime profile
+- full dialog
+- tools/function definitions
+- domain guide `gen.md`
+- target `convertibility_ceiling`
+
+Judge outputs:
+
+```json
+{
+  "outcome_actual": "...",
+  "outcome_matches_ceiling": true,
+  "agent_goal_score": 0,
+  "process_compliance_score": 0,
+  "user_simulation_score": 0,
+  "function_call_score": null,
+  "safety_compliance_score": 0,
+  "overall_score": 0,
+  "hard_failures": [],
+  "remarks": "..."
+}
+```
+
+Scores should use a simple 0-2 scale by default:
+
+- `0`: failed or materially wrong
+- `1`: partially correct, usable but flawed
+- `2`: correct / acceptable
+
+`overall_score` should not hide hard failures. A hard safety or tool-use
+failure should keep the record reviewable even if other scores are high.
+
+#### Layer 3: Human Review Handoff
+
+Human review should consume the same output fields rather than a separate ad hoc
+format. Failed or uncertain records should be written to:
+
+```text
+dialog_review_todo.jsonl
+```
+
+Each row should preserve the original record and add:
+
+```json
+{
+  "qc": {
+    "reason": "...",
+    "suggested_action": "accept|repair|discard|manual_review"
+  }
+}
+```
+
+### Outcome and Scoring Semantics
+
+The benchmark should distinguish user ceiling from assistant performance.
+
+- `convertibility_ceiling`: best realistic outcome for this user under a strong
+  assistant.
+- `ending_expected`: optional legacy alias or natural-language target ending.
+- `outcome_actual`: what actually happened in the dialog.
+
+A dialog is not automatically bad because it failed to convert. It is bad when
+the assistant performs worse than the user's ceiling, violates the process, or
+forces an outcome beyond the ceiling.
+
+Recommended top-level score dimensions:
+
+| Score | Meaning |
+| --- | --- |
+| `agent_goal_score` | Did the assistant reach the best feasible outcome or an acceptable fallback? |
+| `process_compliance_score` | Did it follow the prompt's required flow and domain policy? |
+| `user_simulation_score` | Did the user model follow the runtime profile and difficulty semantics? |
+| `function_call_score` | Were tool calls necessary, well-formed, and followed by appropriate continuation? |
+| `safety_compliance_score` | Did the assistant avoid privacy, security, coercion, fabrication, or other hard violations? |
+| `conversation_quality_score` | Was the dialog natural, coherent, and not repetitive? |
+
+### Run Artifacts
+
+A complete run should write:
+
+```text
+dialog_results.jsonl
+dialog_validate_report.md
+dialog_validate_failed.jsonl
+dialog_rule_qc.md
+dialog_rule_failed.jsonl
+dialog_judge_scores.jsonl
+dialog_review_todo.jsonl
+run_manifest.json
+```
+
+`run_manifest.json` should include:
+
+- input file paths and hashes when practical
+- models
+- backend
+- worker count
+- language
+- start/end timestamps
+- command arguments
+- git commit
+- failure counts
+
+### Failure and Resume Behavior
+
+The runner should never silently lose failed dialogs.
+
+Rules:
+
+- API failures write `run_failed.jsonl` with profile ID, prompt ID, error, and
+  retry count.
+- Resume should support `--offset`, explicit profile IDs, or failed-file replay.
+- Concurrent workers must write output with a lock or per-worker temp files.
+- A partially completed output file should remain valid JSONL.
+
+### Implementation Notes for Existing run_dialogs.py
+
+Current script capabilities to preserve:
+
+- assistant and user model separation
+- user internal annotations stored in remarks
+- function-call parsing and mock function responses
+- function-response turns tagged as system-generated user turns
+- interruption detection by appending `<interrupt>`
+- `<dialog-end>` stop condition
+- compress-like output
+
+Gaps to add in wrappers or future revisions:
+
+- richer `meta` fields from runtime profile
+- run manifest
+- failed-run JSONL
+- structural validator
+- rule QC
+- optional LLM judge
+- review todo output
+- explicit outcome extraction and 0-2 scoring
 
 ## Implementation Order
 
