@@ -226,13 +226,13 @@ python3 skills/benchmark-dialogs/tools/generate_profiles.py \
   --domain cl \
   --spec demo/m1_m3_profile_spec_24.json \
   --prompts demo/m1_m3_prompts_from_md_no_prompt_card.jsonl \
-  --stage2 ../dataset/debt_analysis/profiles/stage2_typical_personas.jsonl \
-  --noise-pool ../dataset/debt_analysis/profiles/noise_pool.jsonl \
-  --behavior-pool ../dataset/debt_analysis/profiles/noise_pool.jsonl \
+  --stage2 demo/stage2_typical_personas.jsonl \
+  --noise-pool demo/noise_pool.jsonl \
+  --behavior-pool demo/behavior_pool.jsonl \
   --guide cl/gen_v2_collection.md \
   --output /tmp/generated_profiles \
-  --count 1 \
-  --workers 1 \
+  --count 8 \
+  --workers 4 \
   --lang es-MX
 ```
 
@@ -243,9 +243,9 @@ python3 skills/benchmark-dialogs/tools/generate_profiles.py \
   --domain cl \
   --spec demo/m1_m3_profile_spec_24.json \
   --prompts demo/m1_m3_prompts_from_md_no_prompt_card.jsonl \
-  --stage2 ../dataset/debt_analysis/profiles/stage2_typical_personas.jsonl \
-  --noise-pool ../dataset/debt_analysis/profiles/noise_pool.jsonl \
-  --behavior-pool ../dataset/debt_analysis/profiles/noise_pool.jsonl \
+  --stage2 demo/stage2_typical_personas.jsonl \
+  --noise-pool demo/noise_pool.jsonl \
+  --behavior-pool demo/behavior_pool.jsonl \
   --guide cl/gen_v2_collection.md \
   --output /tmp/generated_profiles_validate \
   --count 1 \
@@ -277,13 +277,21 @@ python3 run_dialogs.py \
   --backend chatdemo \
   --profiles /tmp/generated_profiles/profiles_runtime.jsonl \
   --prompts demo/m1_m3_prompts_from_md_no_prompt_card.jsonl \
-  --num 1 \
-  --workers 1 \
+  --num 8 \
+  --workers 4 \
   --lang es-MX \
   --output /tmp/dialog_results.jsonl \
   --model openai:gpt-4.1-mini-2025-04-14 \
   --user-model open_router:qwen/qwen3.6-35b-a3b
 ```
+
+并发约定：
+
+- `generate_profiles.py` 和 `run_dialogs.py` 都支持 `--workers N`。
+- 小规模 smoke test 可以用 `--workers 2`；常规批量建议从 `--workers 4`
+  开始，确认 Chatdemo 稳定后再提高。
+- `generate_profiles.py` 会按原 spec 顺序写回输出，即使内部并发完成顺序不同。
+- `run_dialogs.py` 会并发跑 dialog，并用写锁逐条写入 JSONL。
 
 `run_dialogs.py` 当前支持：
 
