@@ -32,6 +32,7 @@ Installed files:
 - `SKILL.md`
 - `README.md`
 - `DESIGN.md`
+- `tools/`
 
 Restart Codex or reload skills if the runtime does not pick up newly installed
 skills automatically.
@@ -46,6 +47,18 @@ Examples:
 - `用 benchmark-dialogs 打包一个 GitHub 可复用 skill`
 
 The skill does not store API keys and does not install dependencies.
+
+## Runnable Tools
+
+The automatic pipeline is being implemented incrementally under
+`skills/benchmark-dialogs/tools/`:
+
+- `clean_dialogs.py`: raw request logs to cleaned dialogs.
+- `build_pools.py`: cleaned dialogs to stage1, noise, behavior, and stage2 pools.
+- `derive_guide.py`: prompts and pools to a domain `gen.md`.
+- `generate_spec.py`: prompts, pools, and guide to `profile_spec.json`.
+
+Each tool can be run directly with `python3` and supports `--help`.
 
 ## Design
 

@@ -8,5 +8,7 @@ mkdir -p "${target_dir}"
 cp "${src_dir}/SKILL.md" "${target_dir}/SKILL.md"
 cp "${src_dir}/README.md" "${target_dir}/README.md"
 cp "${src_dir}/DESIGN.md" "${target_dir}/DESIGN.md"
+rm -rf "${target_dir}/tools"
+cp -R "${src_dir}/tools" "${target_dir}/tools"
 
 echo "Installed benchmark-dialogs skill to ${target_dir}"
