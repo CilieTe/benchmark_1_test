@@ -31,6 +31,7 @@ description: Marketing cold-call benchmark — generate profiles (Agent-driven, 
 | build-pools、构建人设池、噪声池、行为池 | → [[#自动生成路线图]] |
 | derive-guide、生成 gen.md、生成领域规范 | → [[#自动生成路线图]] |
 | generate-spec、生成 spec、profile_spec | → [[#自动生成路线图]] |
+| generate-profiles、生成 runtime profiles、profiles_runtime | → [[#自动生成路线图]] |
 
 如果用户输入**没有匹配到上述任何关键词**（例如只输入 `/benchmark-dialogs` 或 "benchmark"），必须先用 AskUserQuestion 问清楚要执行哪个功能：
 

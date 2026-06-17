@@ -26,6 +26,9 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 
+if __package__ is None or __package__ == "":
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from benchmark_1_test.build_prompt import build_system_prompt
 
 # ── 后端预设 ──────────────────────────────────────────────────
@@ -47,6 +50,12 @@ BACKEND_PRESETS = {
 
 MAX_TURNS = 20
 MAX_RETRIES = 2
+LANGUAGE_NAMES = {
+    "en": "English",
+    "en-SG": "Singapore English",
+    "es-MX": "Mexican Spanish",
+    "id": "Indonesian",
+}
 
 # ── Function Call 解析与模拟 ─────────────────────────────────
 
@@ -370,15 +379,34 @@ def build_user_system(profile: dict, lang: str = "zh") -> str:
 
     situation = profile.get("situation", "")
 
+    affordances = profile.get("behavioral_affordances", "")
+    if isinstance(affordances, list):
+        affordances_text = "\n".join(f"- {item}" for item in affordances)
+    elif isinstance(affordances, dict):
+        affordances_text = "\n".join(f"- {key}: {value}" for key, value in affordances.items())
+    else:
+        affordances_text = str(affordances)
+
     examples = profile.get("behavior_examples", {})
     examples_text = ""
     if examples:
         lines = []
-        for trait, phrases in examples.items():
-            lines.append(f"- {trait}: {' | '.join(phrases)}")
+        if isinstance(examples, dict):
+            for trait, phrases in examples.items():
+                if isinstance(phrases, list):
+                    phrase_text = " | ".join(str(item) for item in phrases)
+                else:
+                    phrase_text = str(phrases)
+                lines.append(f"- {trait}: {phrase_text}")
+        elif isinstance(examples, list):
+            for item in examples:
+                lines.append(f"- {item}")
+        else:
+            lines.append(f"- {examples}")
         examples_text = "\n".join(lines)
 
-    if lang == "en":
+    if lang != "zh":
+        language_name = LANGUAGE_NAMES.get(lang, lang)
         return f"""You are roleplaying a customer who just received a cold call. You must strictly stay in character.
 
 ## Character Profile
@@ -390,7 +418,7 @@ def build_user_system(profile: dict, lang: str = "zh") -> str:
 ## Your Motivational Layers (hierarchical — these are your underlying reaction patterns, not a script to follow)
 {tasks_text}
 ## Your Confrontation & Resolution Style (how you escalate, AND how you back down — gradually, grudgingly, or emotionally)
-{profile.get('behavioral_affordances', '')}
+{affordances_text}
 
 ## Expected Outcome
 {profile.get('ending') or profile.get('convertibility_ceiling', 'natural conclusion')}
@@ -399,7 +427,7 @@ def build_user_system(profile: dict, lang: str = "zh") -> str:
 {examples_text}
 
 ## Format Requirements
-- Use English, conversational, like a real phone call.
+- Use {language_name}, conversational, like a real phone call.
 - Keep replies short (1-3 sentences). No long paragraphs.
 - Never break character to explain what you're doing.
 - No emoji or markdown formatting — just talk naturally.
@@ -432,7 +460,7 @@ The form of deviation should match your character profile (distracted type → m
 ## 你的动机层（按层级递进，这些是你的底层反应模式，不是逐条执行的脚本）
 {tasks_text}
 ## 你的对抗与消解风格（你习惯用什么方式表达不满或顾虑，以及你怎样退让——渐进、嘴硬、还是情绪化）
-{profile.get('behavioral_affordances', '')}
+{affordances_text}
 
 ## 预期结局
 {profile.get('ending') or profile.get('convertibility_ceiling', '自然结束')}
@@ -749,8 +777,8 @@ def parse_args():
                    help="覆盖 API base URL（如 https://my-api.example.com）")
     p.add_argument("--api-key", default=None,
                    help="覆盖 API key（chatdemo 默认无鉴权）")
-    p.add_argument("--lang", choices=["zh", "en"], default="en",
-                   help="对话语言: en（英文）或 zh（中文），默认 en")
+    p.add_argument("--lang", choices=["zh", "en", "en-SG", "es-MX", "id"], default="en",
+                   help="对话语言: en / zh / en-SG / es-MX / id，默认 en")
     p.add_argument("--model", "-m", default="openai:gpt-4.1-mini-2025-04-14",
                    help="Assistant 模型（默认 openai:gpt-4.1-mini-2025-04-14）")
     p.add_argument("--user-model", "-u", default="open_router:qwen/qwen3.6-35b-a3b",

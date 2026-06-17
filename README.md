@@ -4,6 +4,26 @@
 
 构造以 **user input 为自变量** 的营销场景 benchmark，测试 Agent 在用户施加对抗/干扰时的应对能力。
 
+## 自动化全链路
+
+新版自动化构造链路位于 `skills/benchmark-dialogs/`，详细说明见
+`skills/benchmark-dialogs/README.md`。
+
+```text
+clean-dialogs
+-> build-pools
+-> derive-guide
+-> generate-spec
+-> generate-profiles
+-> run-dialogs
+```
+
+当前已完成最小闭环验证：`profile_spec.json` 可以经
+`generate_profiles.py` 生成 `profiles_native.jsonl` 和
+`profiles_runtime.jsonl`，再交给 `run_dialogs.py` 跑出 compress dialog
+JSONL。全量从原始大数据到最终 dialogs 的批处理仍需按 domain 和数据规模单独
+执行。
+
 ## 三维正交架构
 
 | 维度     | 定义                       | 覆盖                      |

@@ -193,6 +193,15 @@ LANG_PACK = {
     "en": {
         "instruction": "You must conduct the entire conversation in English. Use natural, conversational English. Do not use any other language.",
     },
+    "en-SG": {
+        "instruction": "You must conduct the entire conversation in Singapore English. Use natural, conversational English suitable for Singapore. Do not switch to another language unless the user does.",
+    },
+    "es-MX": {
+        "instruction": "Debes mantener toda la conversación en español de México. Usa lenguaje natural y conversacional. No uses otro idioma.",
+    },
+    "id": {
+        "instruction": "Anda harus melakukan seluruh percakapan dalam bahasa Indonesia. Gunakan bahasa Indonesia yang alami dan percakapan. Jangan gunakan bahasa lain.",
+    },
 }
 
 
@@ -221,7 +230,8 @@ def parse_args():
                    help="用户画像 JSONL 路径")
     p.add_argument("--prompts", "-m", default="benchmark_1_test/marketing_prompts.jsonl",
                    help="Marketing prompts JSONL 路径")
-    p.add_argument("--lang", choices=["zh", "en"], default="en", help="对话语言（默认 en）")
+    p.add_argument("--lang", choices=["zh", "en", "en-SG", "es-MX", "id"], default="en",
+                   help="对话语言（默认 en）")
     p.add_argument("--output", "-o", default=None, help="输出 JSONL 路径（默认 stdout）")
     p.add_argument("--profile-id", default=None, help="只处理指定 profile_id")
     p.add_argument("--prompt-id", default=None, help="只处理指定 prompt_id（需配合 --profile-id）")
