@@ -37,3 +37,24 @@
 1. 日常数据构建表（主要）→ 22 条已筛选
 2. 历史测试集 Task 926/1008（次要参考）
 3. Botlab 线上 TM 数据（补充盲区）
+
+## 当前交付文件
+
+TM 分支已整理出 finished 版本，路径位于 `tm/finished/`：
+
+| 文件 | 说明 |
+| --- | --- |
+| `benchmark_telemarketing_en.jsonl` | 英文版，48 条 |
+| `benchmark_telemarketing_es-MX.jsonl` | 西语墨西哥版，24 条 |
+| `benchmark_telemarketing_id.jsonl` | 印尼语版，24 条 |
+
+英文版 metadata 已按 `tm/data/outputs/profiles_1.jsonl` 和
+`tm/data/outputs/profiles_2.jsonl` 对齐：
+
+- `id` 去掉语言后缀后匹配 `profile_id`。
+- `prompt_id`、`business`、`ending_expected` 以 profile 文件为准。
+- `prompt_category`、`prompt_scene` 按业务统一归一化。
+
+finished 文件中的 `laep.remark` 已清空，保留 `laep.id`、`created_by` 和其他结构字段。
+英文版还修复了 `edu_save_L1_en` 的 function-response JSON 尾逗号，以及
+`ins_hlth_L2_en` 的代办授权闭环。
