@@ -1,0 +1,18 @@
+{
+  "domain": "cl",
+  "prompts": "demo/cl_pipeline_smoke/inputs/m1_m3_prompts_from_md_no_prompt_card.jsonl",
+  "stage2": "demo/cl_pipeline_smoke/pools/stage2_typical_personas.jsonl",
+  "noise_pool": "demo/cl_pipeline_smoke/pools/noise_pool_typical.jsonl",
+  "behavior_pool": "demo/cl_pipeline_smoke/pools/behavior_pool.jsonl",
+  "model": "qwen/qwen3.6-35b-a3b",
+  "provider": "open_router",
+  "outputs": [
+    "prompt_analysis.md",
+    "baseline_user_model.md",
+    "behavior_taxonomy.md",
+    "noise_rules.md",
+    "dimension_design.md",
+    "gen.md",
+    "guide_qc.md"
+  ]
+}

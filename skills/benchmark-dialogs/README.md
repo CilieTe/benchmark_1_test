@@ -91,6 +91,9 @@ dialog JSONL。
 
 - `stage1_per_conversation.jsonl`
 - `noise_pool.jsonl`
+- `noise_pool_typical.jsonl`
+- `noise_event_pool_candidate.jsonl`
+- `noise_event_pool_review.md`
 - `behavior_pool.jsonl`
 - `stage2_typical_personas.jsonl`
 - manifest / QC sidecar
@@ -99,7 +102,17 @@ dialog JSONL。
 
 - build 阶段不定义 `difficulty`。
 - `noise_pool` 和 `behavior_pool` 都是片段级，一条片段一行。
+- `noise_pool` 保留原始噪音证据，但相同 `text` 默认最多收集 10 条，避免 `[Silence]` 等高频文本淹没其他类型。
+- `noise_pool_typical` 按 `noise_type + text` 聚合，保留 `occurrence_count` 和代表上下文；后续生成优先使用它来获得更均衡的噪音类型覆盖。
+- `noise_event_pool_candidate` 是三层噪声候选池，包含 `surface_noise`、`semantic_noise` 和 `pragmatic_noise`；它不是 gold label。默认 `surface_noise` 由本地规则抽取，`semantic_noise` / `pragmatic_noise` 由 Chatdemo 抽取；可用 `--noise-event-mode rules|off` 切换。
+- `noise_event_pool_review.md` 标明哪些 noise type 最需要人工质检。semantic/pragmatic 噪声和 `asr_garbled`、`code_mixing`、`truncated_utterance` 默认需要 review 后再用于正式 benchmark。
 - `behavior_pool` 保留 `context` 和 `why_useful`，方便 profile 生成时追溯。
+- 少量失败优先定点修复，不全量重跑。`stage1_failed.jsonl` 和
+  `noise_event_failed.jsonl` 应作为补跑输入，修复后再重建受影响的下游文件。
+- `--only-stage2` 只修复 `stage2_typical_personas.jsonl`，复用已有
+  `stage1_per_conversation.jsonl`，不重跑 noise/event/pool。
+- `--skip-stage1` 用于复用已有 stage1 后重建下游 pools；它不是单独修 stage2
+  的最小入口。
 
 ### 3. derive-guide
 
@@ -116,11 +129,21 @@ dialog JSONL。
 
 输出：
 
+- `prompt_analysis.md`
+- `baseline_user_model.md`
+- `behavior_taxonomy.md`
+- `noise_rules.md`
+- `dimension_design.md`
 - `gen.md`
+- `guide_qc.md`
 - `derive_guide_manifest.json`
 
 注意：`gen.md` 应先人工确认，再进入 `generate-spec` / `generate-profiles`。
-这是控制 benchmark 口径的关键文件。
+它是路由型薄入口，只保留 source map、canonical decisions 和 profile 生成契约；
+详细分析分别保存在同目录的 `prompt_analysis.md`、`dimension_design.md`、
+`baseline_user_model.md`、`behavior_taxonomy.md` 和 `noise_rules.md`。
+`baseline_user_model.md` 是固定产物，用来约束该 domain 下真实外呼用户的默认状态、
+注意力、耐心、防备心理和表达质量，避免 profile 变成过度配合、过度清晰的测试用户。
 
 ### 4. generate-spec
 
@@ -224,12 +247,12 @@ runtime profile 最小 contract：
 ```bash
 python3 skills/benchmark-dialogs/tools/generate_profiles.py \
   --domain cl \
-  --spec demo/m1_m3_profile_spec_24.json \
-  --prompts demo/m1_m3_prompts_from_md_no_prompt_card.jsonl \
-  --stage2 demo/stage2_typical_personas.jsonl \
-  --noise-pool demo/noise_pool.jsonl \
-  --behavior-pool demo/behavior_pool.jsonl \
-  --guide cl/gen_v2_collection.md \
+  --spec demo/cl_pipeline_smoke/inputs/m1_m3_profile_spec_24.json \
+  --prompts demo/cl_pipeline_smoke/inputs/m1_m3_prompts_from_md_no_prompt_card.jsonl \
+  --stage2 demo/cl_pipeline_smoke/pools/stage2_typical_personas.jsonl \
+  --noise-pool demo/cl_pipeline_smoke/pools/noise_pool_typical.jsonl \
+  --behavior-pool demo/cl_pipeline_smoke/pools/behavior_pool.jsonl \
+  --guide demo/cl_pipeline_smoke/guide/gen.md \
   --output /tmp/generated_profiles \
   --count 8 \
   --workers 4 \
@@ -241,12 +264,12 @@ python3 skills/benchmark-dialogs/tools/generate_profiles.py \
 ```bash
 python3 skills/benchmark-dialogs/tools/generate_profiles.py \
   --domain cl \
-  --spec demo/m1_m3_profile_spec_24.json \
-  --prompts demo/m1_m3_prompts_from_md_no_prompt_card.jsonl \
-  --stage2 demo/stage2_typical_personas.jsonl \
-  --noise-pool demo/noise_pool.jsonl \
-  --behavior-pool demo/behavior_pool.jsonl \
-  --guide cl/gen_v2_collection.md \
+  --spec demo/cl_pipeline_smoke/inputs/m1_m3_profile_spec_24.json \
+  --prompts demo/cl_pipeline_smoke/inputs/m1_m3_prompts_from_md_no_prompt_card.jsonl \
+  --stage2 demo/cl_pipeline_smoke/pools/stage2_typical_personas.jsonl \
+  --noise-pool demo/cl_pipeline_smoke/pools/noise_pool_typical.jsonl \
+  --behavior-pool demo/cl_pipeline_smoke/pools/behavior_pool.jsonl \
+  --guide demo/cl_pipeline_smoke/guide/gen.md \
   --output /tmp/generated_profiles_validate \
   --count 1 \
   --validate-only
@@ -276,7 +299,7 @@ dialog simulation，输出 compress JSONL。
 python3 run_dialogs.py \
   --backend chatdemo \
   --profiles /tmp/generated_profiles/profiles_runtime.jsonl \
-  --prompts demo/m1_m3_prompts_from_md_no_prompt_card.jsonl \
+  --prompts demo/cl_pipeline_smoke/inputs/m1_m3_prompts_from_md_no_prompt_card.jsonl \
   --num 8 \
   --workers 4 \
   --lang es-MX \
@@ -324,13 +347,23 @@ Each tool can be run directly with `python3` and supports `--help`.
 已跑通的最小闭环：
 
 ```text
-demo/m1_m3_profile_spec_24.json
+demo/cl_pipeline_smoke/inputs/m1_m3_profile_spec_24.json
 -> generate_profiles.py --count 1
 -> profiles_native.jsonl
 -> profiles_runtime.jsonl
 -> run_dialogs.py --num 1
 -> dialog_results.jsonl
 ```
+
+已跑通的 pool 构建：
+
+```text
+demo/cl_pipeline_smoke/pools/
+demo/tm_pipeline_smoke/pools/
+```
+
+TM smoke 的 `build-pools` 已完成 3672 条 cleaned dialogs 全量抽取，并通过
+定点修复把 `stage1_failed.jsonl` 和 `noise_event_failed.jsonl` 都补到 0。
 
 验证结果：
 

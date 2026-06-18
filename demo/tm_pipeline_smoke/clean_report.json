@@ -1,0 +1,12 @@
+{
+  "read": 3677,
+  "classified_conv": 3676,
+  "classified_other": 1,
+  "groups": 3677,
+  "duplicates_discarded": 0,
+  "conv_before_turn_filter": 3676,
+  "conv_after_turn_filter": 3672,
+  "conv_turn_filter_removed": 4,
+  "ner_output": 0,
+  "other_output": 1
+}

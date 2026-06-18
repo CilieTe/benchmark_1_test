@@ -1,0 +1,46 @@
+{
+  "domain": "cl",
+  "dialogs": 10,
+  "stage1": 10,
+  "stage1_failed": 0,
+  "noise_pool": 23,
+  "behavior_pool": 24,
+  "stage2_typical_personas": 9,
+  "user_starting_position_counts": {
+    "Non-responsive / Incoherent": 1,
+    "Willing to pay": 1,
+    "Conditional Deferral": 1,
+    "Third-party non-debtor": 1,
+    "Passive Non-Responder": 1,
+    "Non-responsive / Unreachable": 1,
+    "Unverified / Non-responsive": 1,
+    "Passive/Acknowledging": 1,
+    "Non-responsive / Silent": 1,
+    "Third-Party Contact (Family Member)": 1
+  },
+  "noise_pool_typical": 80,
+  "noise_type_counts": {
+    "asr_garbled": 2,
+    "minimal_feedback": 10,
+    "silence": 10,
+    "code_mixing": 1
+  },
+  "typical_noise_type_counts": {
+    "asr_garbled": 20,
+    "code_mixing": 20,
+    "minimal_feedback": 20,
+    "silence": 20
+  },
+  "max_noise_per_text": 20,
+  "max_typical_noise_per_type": 20,
+  "noise_source": "('19c38fc9c2d646c08246c89cec1ec8ea', 3)",
+  "noise_source_dialogs": 1504,
+  "noise_pool_full": 816,
+  "noise_type_counts_full": {
+    "asr_garbled": 142,
+    "minimal_feedback": 537,
+    "silence": 20,
+    "code_mixing": 117
+  },
+  "typical_noise_balancing": "Each available noise_type is capped at about 20 rows. Silence is represented by context variants because the text is identical."
+}

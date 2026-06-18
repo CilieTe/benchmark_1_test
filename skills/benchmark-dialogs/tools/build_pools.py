@@ -43,6 +43,52 @@ CODE_MIX_MARKERS = {
     "indonesian": {"nya", "ini", "itu", "sih", "kak", "pak", "bu", "saya", "nanti", "belum", "sudah"},
 }
 
+LANG_MARKERS = {
+    "spanish": {
+        "que", "no", "si", "sí", "pero", "para", "con", "usted", "pago",
+        "cuenta", "hoy", "mañana", "pesos", "señor", "señora", "bueno",
+        "este", "por", "favor", "soy", "yo", "de", "la", "el",
+    },
+    "indonesian": {
+        "saya", "ini", "itu", "belum", "sudah", "nanti", "kak", "pak",
+        "bu", "iya", "tidak", "bayar", "berapa", "hari", "mau", "bisa",
+        "nya", "sih",
+    },
+    "tagalog": {
+        "po", "hindi", "ako", "kayo", "si", "ng", "sa", "ang", "wala",
+        "bayad", "anak", "trabaho", "sige", "opo", "nasa", "tumawag",
+    },
+    "english": {
+        "yes", "no", "ok", "hello", "hi", "payment", "pay", "today",
+        "tomorrow", "account", "loan", "bank", "call", "number",
+    },
+}
+
+EVENT_REVIEW_REQUIRED = {
+    "asr_garbled",
+    "code_mixing",
+    "truncated_utterance",
+    "non_logical_speech",
+    "contradictory_answer",
+    "wrong_slot_answer",
+    "referent_ambiguity",
+    "temporal_ambiguity",
+    "numeric_ambiguity",
+    "role_confusion",
+    "indirect_identity_correction",
+    "implicit_confirmation",
+    "implicit_refusal",
+    "sarcastic_compliance",
+    "hostile_cooperation",
+    "third_party_boundary_probe",
+    "privacy_boundary_probe",
+    "payment_intent_ambiguous",
+    "conditioned_agreement",
+    "face_saving_evasion",
+    "authority_deflection",
+    "procedural_pushback",
+}
+
 
 def iter_jsonl(path: Path):
     with path.open(encoding="utf-8") as f:
@@ -218,7 +264,7 @@ def extract_stage1_one(
     prompt = build_stage1_prompt(record, domain, max_chars)
     raw = client.call(prompt)
     data = parse_json_object(raw)
-    data.setdefault("source_dialog_id", record.get("id", ""))
+    data["source_dialog_id"] = record.get("id", "")
     data["_raw"] = raw
     return data
 
@@ -241,6 +287,36 @@ def context_for_turn(dialog: list[dict[str, Any]], idx: int, window: int = 1) ->
             text = str(turn.get("content") or "").strip()
             chunks.append(f"{role}: {text}")
     return "\n".join(chunks)
+
+
+def tokens(text: str) -> list[str]:
+    return [w.lower().strip(".,;:!?¿¡()[]\"'") for w in text.split() if w.strip()]
+
+
+def dominant_language_from_system(system_text: str) -> str:
+    low = system_text.lower()
+    if "filipino" in low or "tagalog" in low or "tonik" in low:
+        return "tagalog"
+    if "indones" in low or "bahasa" in low:
+        return "indonesian"
+    if "español" in low or "spanish" in low or "mexic" in low or "banco azteca" in low:
+        return "spanish"
+    return "unknown"
+
+
+def language_hits(text: str) -> dict[str, int]:
+    word_set = set(tokens(text))
+    return {lang: len(word_set & markers) for lang, markers in LANG_MARKERS.items()}
+
+
+def is_code_mixing(text: str, dominant_language: str) -> bool:
+    hits = language_hits(text)
+    active = [lang for lang, count in hits.items() if count >= 2]
+    off_domain = [
+        lang for lang, count in hits.items()
+        if lang != dominant_language and count >= 2
+    ]
+    return len(active) >= 2 or bool(off_domain)
 
 
 def classify_noise(text: str) -> tuple[int, str | None]:
@@ -268,25 +344,26 @@ def classify_noise(text: str) -> tuple[int, str | None]:
     if re.search(r"(.)\1{4,}", c):
         score += 4
         ntype = "asr_garbled"
-    if re.search(r"\b[a-z]{1,3}co\b", c.lower()):
-        score += 5
-        ntype = "asr_garbled"
     if words:
         filler_count = sum(1 for w in lower_words if w in FILLER_WORDS)
         if filler_count / max(len(words), 1) > 0.5:
             score += 3
-            ntype = ntype or "pragmatic_noise"
-    for label, markers in CODE_MIX_MARKERS.items():
-        if any(w in markers for w in lower_words):
+            ntype = ntype or "minimal_feedback"
+    if any(w in markers for markers in CODE_MIX_MARKERS.values() for w in lower_words):
+        if len(lower_words) <= 3:
             score += 2
             ntype = "code_mixing"
-            break
     return score, ntype
 
 
-def build_noise_pool(dialogs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def normalize_noise_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip()).lower()
+
+
+def build_noise_pool(dialogs: list[dict[str, Any]], max_per_text: int) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     seen: set[tuple[str, int, str]] = set()
+    text_counts: Counter[str] = Counter()
     for record in dialogs:
         dialog = record.get("dialog") or []
         source_id = str(record.get("id") or "")
@@ -299,11 +376,15 @@ def build_noise_pool(dialogs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             score, ntype = classify_noise(text)
             if score < 5 or not ntype:
                 continue
+            text_key = normalize_noise_text(text)
+            if max_per_text > 0 and text_counts[text_key] >= max_per_text:
+                continue
             idx = turn.get("turn_index")
             key = (source_id, int(idx) if isinstance(idx, int) else -1, text)
             if key in seen:
                 continue
             seen.add(key)
+            text_counts[text_key] += 1
             rows.append(
                 {
                     "source_dialog_id": source_id,
@@ -315,6 +396,475 @@ def build_noise_pool(dialogs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 }
             )
     return rows
+
+
+def build_typical_noise_pool(
+    noise_rows: list[dict[str, Any]],
+    max_per_type: int,
+    max_contexts: int = 3,
+) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in noise_rows:
+        ntype = str(row.get("noise_type") or "unknown")
+        text = str(row.get("text") or "").strip()
+        if not text:
+            continue
+        key = (ntype, normalize_noise_text(text))
+        item = grouped.get(key)
+        if item is None:
+            item = {
+                "noise_type": ntype,
+                "text": text,
+                "occurrence_count": 0,
+                "source_examples": [],
+                "contexts": [],
+                "heuristic_score_max": row.get("heuristic_score"),
+            }
+            grouped[key] = item
+        item["occurrence_count"] += 1
+        if len(item["source_examples"]) < max_contexts:
+            item["source_examples"].append(
+                {
+                    "source_dialog_id": row.get("source_dialog_id"),
+                    "turn_index": row.get("turn_index"),
+                }
+            )
+        context = str(row.get("context") or "").strip()
+        if context and len(item["contexts"]) < max_contexts:
+            item["contexts"].append(context)
+        score = row.get("heuristic_score")
+        if isinstance(score, (int, float)):
+            current = item.get("heuristic_score_max")
+            if not isinstance(current, (int, float)) or score > current:
+                item["heuristic_score_max"] = score
+
+    by_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in grouped.values():
+        by_type[str(item.get("noise_type") or "unknown")].append(item)
+
+    rows: list[dict[str, Any]] = []
+    for ntype in sorted(by_type):
+        candidates = sorted(
+            by_type[ntype],
+            key=lambda x: (-int(x.get("occurrence_count") or 0), str(x.get("text") or "")),
+        )
+        rows.extend(candidates[:max_per_type] if max_per_type > 0 else candidates)
+    return rows
+
+
+def previous_turn(dialog: list[dict[str, Any]], idx: int, role: str | None = None) -> dict[str, Any] | None:
+    prev = None
+    for turn in dialog:
+        t_idx = turn.get("turn_index")
+        if isinstance(t_idx, int) and t_idx < idx and (role is None or turn.get("role") == role):
+            prev = turn
+    return prev
+
+
+def add_noise_event(
+    rows: list[dict[str, Any]],
+    record: dict[str, Any],
+    turn: dict[str, Any],
+    noise_family: str,
+    noise_type: str,
+    reason: str,
+) -> None:
+    dialog = record.get("dialog") or []
+    idx = turn.get("turn_index")
+    text = str(turn.get("content") or "").strip()
+    rows.append(
+        {
+            "noise_family": noise_family,
+            "noise_type": noise_type,
+            "source_dialog_id": record.get("id"),
+            "turn_index": idx,
+            "role": turn.get("role"),
+            "text": text,
+            "context": context_for_turn(dialog, idx if isinstance(idx, int) else -1),
+            "heuristic_reason": reason,
+            "candidate_source": "build_pools_rule_based_scan",
+            "needs_human_review": noise_type in EVENT_REVIEW_REQUIRED,
+        }
+    )
+
+
+def build_noise_event_candidates_rule_based(dialogs: list[dict[str, Any]], max_per_type: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    identity_q = re.compile(r"(eres|es usted|hablo con|tengo el gusto con|speaking with|berbicara dengan|apakah saya.*dengan|kayo.*ba si|usted es|you are|are you|¿.*es)", re.I)
+    payment_q = re.compile(r"(pago|pagar|cubrir|payment|pay|bayar|monto|amount|cu[aá]nto|cuando|cu[aá]ndo|today|hoy|hari ini|ngayon)", re.I)
+    time_words = re.compile(r"\b(later|today|tomorrow|yesterday|tonight|mañana|manana|ahorita|luego|hoy|ayer|nanti|besok|kemarin|ngayon|mamaya|bukas)\b|月底|明天|今天|昨天|晚点|稍后", re.I)
+    numberish = re.compile(r"(\d|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|cien|mil|pesos|rupiah|ribu|hundred|thousand|百|千|万)", re.I)
+    referents = re.compile(r"\b(he|she|him|her|they|that|this|it|él|ella|ese|esa|eso|aquel|aquella|dia|itu|ini|siya|nya)\b|他|她|那个|这个|那边|这边|上次", re.I)
+    third_party = re.compile(r"(wife|husband|spouse|mother|father|brother|sister|son|daughter|老婆|老公|妈妈|爸爸|儿子|女儿|esposa|esposo|madre|padre|hermano|hermana|anak|istri|suami|ibu|bapak|kakak|adik)", re.I)
+    privacy = re.compile(r"(privacy|privacidad|datos|data|informaci[oó]n|information|autoriz|consent|where.*number|d[oó]nde.*n[uú]mero|de d[oó]nde|怎么知道|隐私|授权|personal)", re.I)
+    refusal = re.compile(r"(stop calling|don.?t call|no llame|no me llames|dejen de llamar|not interested|no quiero|no puedo|不方便|别打|不要再|huwag|jangan|tidak mau)", re.I)
+    condition = re.compile(r"(\bif\b|cuando|si me|si ustedes|despu[eé]s de|after|first|primero|send|env[ií]a|sms|message|whatsapp|短信|先|再|kalau|jika)", re.I)
+    authority = re.compile(r"(boss|manager|wife|husband|spouse|company|bank|approval|approve|老婆|老公|老板|经理|公司|银行|批准|esposa|esposo|jefe|banco|istri|suami|atasan)", re.I)
+    procedure = re.compile(r"(send.*sms|send.*message|whatsapp|email|branch|office|app|link|text me|no.*phone|not.*call|短信|邮件|app|线下|门店|发给我|mande.*mensaje|env[ií]e.*mensaje)", re.I)
+    sarcasm = re.compile(r"(yeah right|sure sure|whatever|as you say|lo que digas|sí claro|ajá claro|对对对|你说什么都对|terserah|iya deh)", re.I)
+    hostile = re.compile(r"(idiot|stupid|fuck|shit|c[aá]llate|pendejo|idiota|est[uú]pido|ching|puta|bobo|gago|tanga|闭嘴|傻|滚|bodoh|anjing)", re.I)
+    comply = re.compile(r"(ok|yes|sí|si|ya|vale|bueno|pago|pagar|pay|bayar|will|puedo|puede|好|可以|行|iya|sige)", re.I)
+
+    for record in dialogs:
+        dialog = record.get("dialog") or []
+        system_text = str(dialog[0].get("content") if dialog else "")
+        dominant_language = dominant_language_from_system(system_text)
+        for turn in dialog:
+            role = turn.get("role")
+            text = str(turn.get("content") or "").strip()
+            low = text.lower()
+            idx = turn.get("turn_index")
+            if role == "assistant" and "... [interrupted]" in low:
+                add_noise_event(rows, record, turn, "surface_noise", "overlap_interrupt", "assistant turn contains interrupted marker")
+                continue
+            if role != "user" or low in {"[conversation begins]", "[conversation begins]"}:
+                continue
+
+            word_list = tokens(text)
+            word_set = set(word_list)
+            if "[silence]" in low:
+                add_noise_event(rows, record, turn, "surface_noise", "silence", "user turn contains [Silence]")
+            if word_list and word_set.issubset(FILLER_WORDS):
+                add_noise_event(rows, record, turn, "surface_noise", "minimal_feedback", "all tokens are filler/minimal feedback")
+            elif 0 < len(text) <= 8:
+                add_noise_event(rows, record, turn, "surface_noise", "minimal_feedback", "short user text <= 8 chars")
+            malformed = sum(1 for w in word_list if len(w) >= 8 and not re.search(r"[aeiouáéíóú]", w))
+            if re.match(r"^[\d\s.,;:!?¿¡\-_]+$", text) or re.search(r"(.)\1{4,}", text) or (len(word_list) >= 8 and malformed >= 2):
+                add_noise_event(rows, record, turn, "surface_noise", "asr_garbled", "numeric/punctuation only, repeated chars, or malformed-token pattern")
+            if is_code_mixing(text, dominant_language):
+                add_noise_event(rows, record, turn, "surface_noise", "code_mixing", "language markers indicate mixed or off-domain language")
+            if re.search(r"(\.\.\.|…)$", text) or re.search(r"\[interrupted\]", low):
+                add_noise_event(rows, record, turn, "surface_noise", "truncated_utterance", "ellipsis or interruption marker in user turn")
+
+            if len(word_list) >= 6:
+                unique_ratio = len(set(word_list)) / max(len(word_list), 1)
+                filler_ratio = sum(1 for w in word_list if w in FILLER_WORDS) / max(len(word_list), 1)
+                if unique_ratio < 0.45 or filler_ratio > 0.45:
+                    add_noise_event(rows, record, turn, "semantic_noise", "non_logical_speech", "low lexical diversity or high filler ratio in longer text")
+            if re.search(r"\b(yes|sí|si|iya|ok|no|not|hindi|tidak)\b", low) and re.search(r"\b(but|pero|sin embargo|但是|不过|tapi)\b", low):
+                add_noise_event(rows, record, turn, "semantic_noise", "contradictory_answer", "affirm/deny plus contrast marker")
+            prev = previous_turn(dialog, idx if isinstance(idx, int) else -1, "assistant")
+            prev_text = str(prev.get("content") or "") if prev else ""
+            if prev and payment_q.search(prev_text) and not payment_q.search(text) and 0 < len(text) < 80:
+                add_noise_event(rows, record, turn, "semantic_noise", "wrong_slot_answer", "previous assistant asks payment/amount/time but user answer lacks payment/time cue")
+            if referents.search(text) and len(word_list) <= 12:
+                add_noise_event(rows, record, turn, "semantic_noise", "referent_ambiguity", "short answer with ambiguous referent")
+            if time_words.search(text):
+                add_noise_event(rows, record, turn, "semantic_noise", "temporal_ambiguity", "contains vague/relative time expression")
+            if numberish.search(text):
+                add_noise_event(rows, record, turn, "semantic_noise", "numeric_ambiguity", "contains number-like expression needing confirmation")
+            if re.search(r"(soy su esposo|soy su esposa|saya anaknya|anak po ako|no soy|wrong number|n[uú]mero equivocado|nomor .*bapak saya|not .*person)", low):
+                add_noise_event(rows, record, turn, "semantic_noise", "role_confusion", "identity denial or third-party speaker marker")
+
+            if prev and identity_q.search(prev_text) and re.search(r"\b(i am|soy|me llamo|this is|ako si|saya|我是)\b", low) and not re.search(r"\b(yes|sí|si|correct|correcto|iya|是的)\b", low):
+                add_noise_event(rows, record, turn, "pragmatic_noise", "indirect_identity_correction", "identity question followed by self-identification without direct yes/no")
+            if prev and re.search(r"(puedes atender|can you talk|tienes.*momento|listen|escuch|o[ií]r|hablar)", prev_text, re.I) and re.search(r"\b(ok|sí|si|ya|bueno|go ahead|dime|tell me|adelante|iya|sige)\b", low):
+                add_noise_event(rows, record, turn, "pragmatic_noise", "implicit_confirmation", "availability question answered with proceed/listening cue")
+            if refusal.search(text):
+                add_noise_event(rows, record, turn, "pragmatic_noise", "implicit_refusal", "refusal/stop-call phrase")
+            if sarcasm.search(text):
+                add_noise_event(rows, record, turn, "pragmatic_noise", "sarcastic_compliance", "sarcasm-like compliance phrase")
+            if hostile.search(text) and comply.search(text):
+                add_noise_event(rows, record, turn, "pragmatic_noise", "hostile_cooperation", "hostile words plus compliance/payment cue")
+            if third_party.search(text) and re.search(r"(debt|loan|account|cuenta|deuda|pago|utang|pinjaman|payment|信息|账户)", text, re.I):
+                add_noise_event(rows, record, turn, "pragmatic_noise", "third_party_boundary_probe", "third-party/family marker near debt/account/payment terms")
+            if privacy.search(text):
+                add_noise_event(rows, record, turn, "pragmatic_noise", "privacy_boundary_probe", "privacy/data/source/authorization phrase")
+            if re.search(r"(maybe|maybe later|see|try|if i can|cuando pueda|a ver|vemos|quiz[aá]s|tal vez|有钱|看看|nanti|mungkin|usahakan)", low):
+                add_noise_event(rows, record, turn, "pragmatic_noise", "payment_intent_ambiguous", "ambiguous payment-intent phrase")
+            if condition.search(text):
+                add_noise_event(rows, record, turn, "pragmatic_noise", "conditioned_agreement", "conditional/procedural condition marker")
+            if re.search(r"(not.*money|no.*dinero|no es.*dinero|not broke|不是没钱|hindi.*pera|bukan.*uang)", low):
+                add_noise_event(rows, record, turn, "pragmatic_noise", "face_saving_evasion", "face-saving money denial marker")
+            if authority.search(text):
+                add_noise_event(rows, record, turn, "pragmatic_noise", "authority_deflection", "decision/payment authority shifted to person/org")
+            if procedure.search(text):
+                add_noise_event(rows, record, turn, "pragmatic_noise", "procedural_pushback", "asks to change channel/process")
+
+    seen: set[tuple[str, str, Any, str | None]] = set()
+    deduped: list[dict[str, Any]] = []
+    for row in rows:
+        key = (row["noise_type"], str(row.get("source_dialog_id")), row.get("turn_index"), row.get("role"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+
+    by_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in deduped:
+        by_type[str(row["noise_type"])].append(row)
+
+    selected: list[dict[str, Any]] = []
+    for noise_type in sorted(by_type):
+        chosen: list[dict[str, Any]] = []
+        seen_sources: set[str] = set()
+        candidates = sorted(
+            by_type[noise_type],
+            key=lambda r: (str(r.get("source_dialog_id") or ""), -len(str(r.get("context") or ""))),
+        )
+        for row in candidates:
+            source_id = str(row.get("source_dialog_id") or "")
+            if source_id in seen_sources:
+                continue
+            chosen.append(row)
+            seen_sources.add(source_id)
+            if max_per_type > 0 and len(chosen) >= max_per_type:
+                break
+        if max_per_type <= 0 or len(chosen) < max_per_type:
+            keys = {(r.get("source_dialog_id"), r.get("turn_index"), r.get("role")) for r in chosen}
+            for row in candidates:
+                key = (row.get("source_dialog_id"), row.get("turn_index"), row.get("role"))
+                if key in keys:
+                    continue
+                chosen.append(row)
+                keys.add(key)
+                if max_per_type > 0 and len(chosen) >= max_per_type:
+                    break
+        for i, row in enumerate(chosen, 1):
+            row = dict(row)
+            row["event_id"] = f"{noise_type}_{i:03d}"
+            selected.append(row)
+    return selected
+
+
+def build_noise_event_llm_prompt(record: dict[str, Any], domain: str, max_chars: int) -> str:
+    dialog = dialog_to_text(record.get("dialog") or [], max_chars)
+    return f"""You are mining real `{domain}` phone-call dialogs for semantic and pragmatic noise candidates.
+
+Return only events that are clearly supported by the dialog. Do not include surface artifacts such as silence, filler-only feedback, code mixing, ASR garbling, truncation, or assistant interruption; those are handled by deterministic rules.
+
+Allowed semantic_noise types:
+- non_logical_speech
+- contradictory_answer
+- wrong_slot_answer
+- referent_ambiguity
+- temporal_ambiguity
+- numeric_ambiguity
+- role_confusion
+
+Allowed pragmatic_noise types:
+- indirect_identity_correction
+- implicit_confirmation
+- implicit_refusal
+- sarcastic_compliance
+- hostile_cooperation
+- third_party_boundary_probe
+- privacy_boundary_probe
+- payment_intent_ambiguous
+- conditioned_agreement
+- face_saving_evasion
+- authority_deflection
+- procedural_pushback
+
+Dialog:
+\"\"\"
+{dialog}
+\"\"\"
+
+Return a JSON array only. Each object must have:
+{{
+  "noise_family": "semantic_noise or pragmatic_noise",
+  "noise_type": "one allowed type",
+  "turn_index": 5,
+  "text": "verbatim user text from that turn",
+  "heuristic_reason": "short evidence-based reason"
+}}
+
+Rules:
+- Only user turns are eligible.
+- Use exact turn_index values from the dialog.
+- Do not invent or paraphrase text.
+- The `heuristic_reason` must cite only evidence visible in the included dialog context.
+- Do not mention facts, actions, or future intentions that are not explicitly present in the selected turn or its nearby context.
+- If no strong candidates exist, return [].
+- Prefer precision over recall.
+"""
+
+
+def extract_noise_events_one(
+    client: ChatClient,
+    record: dict[str, Any],
+    domain: str,
+    max_chars: int,
+) -> list[dict[str, Any]]:
+    raw = client.call(build_noise_event_llm_prompt(record, domain, max_chars))
+    data = parse_json_array(raw)
+    dialog = record.get("dialog") or []
+    turn_by_index = {
+        turn.get("turn_index"): turn
+        for turn in dialog
+        if isinstance(turn.get("turn_index"), int)
+    }
+    rows: list[dict[str, Any]] = []
+    allowed_families = {"semantic_noise", "pragmatic_noise"}
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        family = str(item.get("noise_family") or "")
+        noise_type = str(item.get("noise_type") or "")
+        idx = item.get("turn_index")
+        if family not in allowed_families or not isinstance(idx, int):
+            continue
+        turn = turn_by_index.get(idx)
+        if not turn or turn.get("role") != "user":
+            continue
+        text = str(turn.get("content") or "").strip()
+        if not text:
+            continue
+        rows.append(
+            {
+                "noise_family": family,
+                "noise_type": noise_type,
+                "source_dialog_id": record.get("id"),
+                "turn_index": idx,
+                "role": "user",
+                "text": text,
+                "context": context_for_turn(dialog, idx),
+                "heuristic_reason": str(item.get("heuristic_reason") or "chatdemo candidate"),
+                "candidate_source": "chatdemo_noise_event_mining",
+                "needs_human_review": True,
+            }
+        )
+    return rows
+
+
+def cap_noise_events_by_type(rows: list[dict[str, Any]], max_per_type: int) -> list[dict[str, Any]]:
+    by_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    seen: set[tuple[str, str, Any, str | None]] = set()
+    for row in rows:
+        key = (
+            str(row.get("noise_type") or ""),
+            str(row.get("source_dialog_id") or ""),
+            row.get("turn_index"),
+            row.get("role"),
+        )
+        if key in seen or not key[0]:
+            continue
+        seen.add(key)
+        by_type[key[0]].append(row)
+
+    selected: list[dict[str, Any]] = []
+    for noise_type in sorted(by_type):
+        chosen: list[dict[str, Any]] = []
+        seen_sources: set[str] = set()
+        candidates = sorted(
+            by_type[noise_type],
+            key=lambda r: (str(r.get("source_dialog_id") or ""), -len(str(r.get("context") or ""))),
+        )
+        for row in candidates:
+            source_id = str(row.get("source_dialog_id") or "")
+            if source_id in seen_sources:
+                continue
+            chosen.append(row)
+            seen_sources.add(source_id)
+            if max_per_type > 0 and len(chosen) >= max_per_type:
+                break
+        if max_per_type <= 0 or len(chosen) < max_per_type:
+            keys = {(r.get("source_dialog_id"), r.get("turn_index"), r.get("role")) for r in chosen}
+            for row in candidates:
+                key = (row.get("source_dialog_id"), row.get("turn_index"), row.get("role"))
+                if key in keys:
+                    continue
+                chosen.append(row)
+                keys.add(key)
+                if max_per_type > 0 and len(chosen) >= max_per_type:
+                    break
+        for i, row in enumerate(chosen, 1):
+            item = dict(row)
+            item["event_id"] = f"{noise_type}_{i:03d}"
+            selected.append(item)
+    return selected
+
+
+def build_noise_event_candidates_chatdemo(
+    client: ChatClient,
+    dialogs: list[dict[str, Any]],
+    domain: str,
+    max_per_type: int,
+    workers: int,
+    max_chars: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    surface_rows = [
+        row for row in build_noise_event_candidates_rule_based(dialogs, 0)
+        if row.get("noise_family") == "surface_noise"
+    ]
+    llm_rows: list[dict[str, Any]] = []
+    failed_rows: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(extract_noise_events_one, client, record, domain, max_chars): record
+            for record in dialogs
+        }
+        for i, fut in enumerate(as_completed(futures), 1):
+            record = futures[fut]
+            source_id = record.get("id", "")
+            try:
+                rows = fut.result()
+                llm_rows.extend(rows)
+                LOG.info("[%d/%d] noise events ok: %s rows=%d", i, len(futures), str(source_id)[:16], len(rows))
+            except Exception as exc:  # noqa: BLE001
+                failed_rows.append({"source_dialog_id": source_id, "error": str(exc)})
+                LOG.warning("[%d/%d] noise events failed: %s %s", i, len(futures), source_id, exc)
+    return cap_noise_events_by_type(surface_rows + llm_rows, max_per_type), failed_rows
+
+
+def write_noise_event_review(path: Path, rows: list[dict[str, Any]]) -> None:
+    by_type = Counter(str(r.get("noise_type", "")) for r in rows)
+    by_family = Counter(str(r.get("noise_family", "")) for r in rows)
+    review_counts = Counter(bool(r.get("needs_human_review")) for r in rows)
+    needs_review = sorted(t for t in by_type if t in EVENT_REVIEW_REQUIRED)
+    stable = sorted(t for t in by_type if t not in EVENT_REVIEW_REQUIRED)
+    lines = [
+        "# Noise Event Pool Review Notes",
+        "",
+        "This file summarizes `noise_event_pool_candidate.jsonl` output.",
+        "Rows are candidate labels, not gold labels.",
+        "By default, surface noise is rule-based and semantic/pragmatic noise is mined by Chatdemo.",
+        "",
+        "## Counts",
+        "",
+        f"- Total rows: {len(rows)}",
+        f"- Family counts: {dict(by_family)}",
+        f"- Needs human review: {review_counts.get(True, 0)}",
+        f"- Usually stable surface rows: {review_counts.get(False, 0)}",
+        "",
+        "## Type Counts",
+        "",
+        "| noise_type | rows | human review |",
+        "| --- | ---: | --- |",
+    ]
+    for noise_type, count in sorted(by_type.items()):
+        flag = "yes" if noise_type in EVENT_REVIEW_REQUIRED else "optional"
+        lines.append(f"| `{noise_type}` | {count} | {flag} |")
+    lines.extend(
+        [
+            "",
+            "## Best Human-QC Targets",
+            "",
+            "These types should be reviewed before use in final benchmark generation:",
+            "",
+        ]
+    )
+    lines.extend(f"- `{t}`" for t in needs_review)
+    lines.extend(
+        [
+            "",
+            "These types are usually stable but still benefit from spot checks:",
+            "",
+        ]
+    )
+    lines.extend(f"- `{t}`" for t in stable)
+    lines.extend(
+        [
+            "",
+            "## Notes",
+            "",
+            "- `semantic_noise` and `pragmatic_noise` are heuristic candidates and should not be treated as gold labels.",
+            "- `asr_garbled`, `code_mixing`, and `truncated_utterance` are surface-level but still need review because rule-based language/noise detection can overfire.",
+            "- Prefer this event pool for discovery and taxonomy work. Use only reviewed rows for release-quality profile generation.",
+        ]
+    )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def build_behavior_pool(stage1_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -440,7 +990,17 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--max-dialog-chars", type=int, default=18000)
     parser.add_argument("--num-personas", type=int, default=0)
+    parser.add_argument("--max-noise-per-text", type=int, default=10)
+    parser.add_argument("--max-typical-noise-per-type", type=int, default=20)
+    parser.add_argument("--max-noise-events-per-type", type=int, default=20)
+    parser.add_argument(
+        "--noise-event-mode",
+        choices=["chatdemo", "rules", "off"],
+        default="chatdemo",
+        help="Build noise_event_pool_candidate with Chatdemo semantic/pragmatic mining, local rules only, or disable it.",
+    )
     parser.add_argument("--skip-stage1", action="store_true", help="Reuse existing stage1 file in output dir")
+    parser.add_argument("--only-stage2", action="store_true", help="Repair only stage2_typical_personas from existing stage1")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -454,6 +1014,10 @@ def main() -> int:
     stage1_path = args.output / "stage1_per_conversation.jsonl"
     behavior_path = args.output / "behavior_pool.jsonl"
     noise_path = args.output / "noise_pool.jsonl"
+    typical_noise_path = args.output / "noise_pool_typical.jsonl"
+    noise_event_path = args.output / "noise_event_pool_candidate.jsonl"
+    noise_event_review_path = args.output / "noise_event_pool_review.md"
+    noise_event_failed_path = args.output / "noise_event_failed.jsonl"
     stage2_path = args.output / "stage2_typical_personas.jsonl"
     failed_path = args.output / "stage1_failed.jsonl"
     report_path = args.output / "build_pools_report.json"
@@ -470,6 +1034,21 @@ def main() -> int:
         retries=args.retries,
         timeout=args.timeout,
     )
+
+    if args.only_stage2:
+        stage1_rows = read_existing_stage1(stage1_path)
+        LOG.info("reused stage1 rows: %d", len(stage1_rows))
+        num_personas = choose_num_personas(len(stage1_rows), args.num_personas)
+        stage2_rows = extract_stage2(client, stage1_rows, args.domain, num_personas)
+        write_jsonl(stage2_path, stage2_rows)
+        LOG.info("stage2 rows: %d", len(stage2_rows))
+        report = {}
+        if report_path.exists():
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["stage2_typical_personas"] = len(stage2_rows)
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        LOG.info("updated report: %s", report_path)
+        return 0
 
     if args.skip_stage1:
         stage1_rows = read_existing_stage1(stage1_path)
@@ -500,9 +1079,34 @@ def main() -> int:
                         ferr.flush()
                         LOG.warning("[%d/%d] stage1 failed: %s %s", i, len(futures), source_id, exc)
 
-    noise_rows = build_noise_pool(dialogs)
+    noise_rows = build_noise_pool(dialogs, args.max_noise_per_text)
     write_jsonl(noise_path, noise_rows)
     LOG.info("noise rows: %d", len(noise_rows))
+
+    typical_noise_rows = build_typical_noise_pool(noise_rows, args.max_typical_noise_per_type)
+    write_jsonl(typical_noise_path, typical_noise_rows)
+    LOG.info("typical noise rows: %d", len(typical_noise_rows))
+
+    noise_event_failed_rows: list[dict[str, Any]] = []
+    if args.noise_event_mode == "off":
+        noise_event_rows = []
+        noise_event_failed_path.write_text("", encoding="utf-8")
+    elif args.noise_event_mode == "rules":
+        noise_event_rows = build_noise_event_candidates_rule_based(dialogs, args.max_noise_events_per_type)
+        noise_event_failed_path.write_text("", encoding="utf-8")
+    else:
+        noise_event_rows, noise_event_failed_rows = build_noise_event_candidates_chatdemo(
+            client,
+            dialogs,
+            args.domain,
+            args.max_noise_events_per_type,
+            args.workers,
+            args.max_dialog_chars,
+        )
+        write_jsonl(noise_event_failed_path, noise_event_failed_rows)
+    write_jsonl(noise_event_path, noise_event_rows)
+    write_noise_event_review(noise_event_review_path, noise_event_rows)
+    LOG.info("noise event candidate rows: %d", len(noise_event_rows))
 
     behavior_rows = build_behavior_pool(stage1_rows)
     write_jsonl(behavior_path, behavior_rows)
@@ -523,6 +1127,18 @@ def main() -> int:
         "stage1": len(stage1_rows),
         "stage1_failed": len(failed_rows),
         "noise_pool": len(noise_rows),
+        "noise_pool_typical": len(typical_noise_rows),
+        "noise_type_counts": Counter(str(r.get("noise_type", "")) for r in noise_rows),
+        "typical_noise_type_counts": Counter(str(r.get("noise_type", "")) for r in typical_noise_rows),
+        "noise_event_pool_candidate": len(noise_event_rows),
+        "noise_event_mode": args.noise_event_mode,
+        "noise_event_failed": len(noise_event_failed_rows),
+        "noise_event_family_counts": Counter(str(r.get("noise_family", "")) for r in noise_event_rows),
+        "noise_event_type_counts": Counter(str(r.get("noise_type", "")) for r in noise_event_rows),
+        "noise_event_review_required": sum(1 for r in noise_event_rows if r.get("needs_human_review")),
+        "max_noise_per_text": args.max_noise_per_text,
+        "max_typical_noise_per_type": args.max_typical_noise_per_type,
+        "max_noise_events_per_type": args.max_noise_events_per_type,
         "behavior_pool": len(behavior_rows),
         "stage2_typical_personas": len(stage2_rows),
         "user_starting_position_counts": Counter(

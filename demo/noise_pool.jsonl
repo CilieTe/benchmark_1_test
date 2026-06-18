@@ -1,2 +1,0 @@
-{"noise_type":"minimal_feedback","content":"yeah, I hear you","context":{"domain":"cl","lang":"en"},"why_useful":"Short phone-call acknowledgement without commitment."}
-{"noise_type":"pragmatic_noise","content":"look, I am in the middle of something","context":{"domain":"cl","lang":"en"},"why_useful":"Busy-user interruption that can trigger retention handling."}

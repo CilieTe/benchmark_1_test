@@ -3,6 +3,7 @@
 
 Outputs:
 - prompt_analysis.md
+- baseline_user_model.md
 - behavior_taxonomy.md
 - noise_rules.md
 - dimension_design.md
@@ -178,6 +179,60 @@ Be concrete and operational. Do not invent facts outside the prompts."""
     return strip_markdown_fence(client.call(prompt))
 
 
+def generate_baseline_user_model(
+    client: ChatClient,
+    domain: str,
+    prompts: list[dict[str, Any]],
+    stage2: list[dict[str, Any]],
+    behavior_pool: list[dict[str, Any]],
+    noise_pool: list[dict[str, Any]],
+    notes: str,
+) -> str:
+    prompt = f"""You are deriving a baseline user model for `{domain}` outbound-call benchmark generation.
+
+This is not a behavior taxonomy. It defines the default real-user state that every generated profile should start from before domain-specific behaviors are applied.
+
+Use these inputs:
+- Assistant prompt summaries
+- Stage2 personas
+- Behavior pool
+- Noise/friction pool
+- User notes
+
+User notes:
+{notes or "(none)"}
+
+Prompt summaries:
+{compact_json(prompt_summary(prompts, 2500), 30000)}
+
+Stage2 personas:
+{compact_json(stage2[:120], 40000)}
+
+Behavior pool sample:
+{compact_json(behavior_pool[:120], 40000)}
+
+Noise/friction pool sample:
+{compact_json(noise_pool[:120], 40000)}
+
+Write Markdown with exactly these sections:
+# Baseline User Model
+## Outbound Call Defaults
+Describe general active-outbound user traits: attention level, patience, trust/defensiveness, listening quality, language quality, initiative level, interruption tendency, disengagement and hang-up tendency.
+## Domain-Specific Adaptation
+Adapt the outbound defaults to `{domain}`. Do not blindly transfer telemarketing assumptions to collection or customer-service scenarios.
+## Non-Transferable Assumptions
+List assumptions that may hold in one outbound domain but should not be copied into this domain without evidence.
+## Profile Generation Implications
+Operational rules for `persona`, `situation`, `task_instructions`, `behavioral_affordances`, and `behavior_examples`.
+
+Rules:
+- Keep it grounded in the provided data and notes.
+- Do not write turn-by-turn scripts.
+- Make the model domain-aware, not a generic list of user flaws.
+- Emphasize realistic phone-call cognition: partial listening, vague expression, short answers, interruption, and defensiveness when supported by data."""
+    return strip_markdown_fence(client.call(prompt))
+
+
 def generate_behavior_taxonomy(
     client: ChatClient,
     domain: str,
@@ -253,6 +308,14 @@ State how profile_spec should cover user_starting_position, convertibility_ceili
 ## Spec Field Recommendations
 List required and optional fields.
 
+Hard rules:
+- `convertibility_ceiling` is from the business outcome perspective. In collection, user refusal to repay is a Failure / Low-No Convertibility outcome.
+- Difficulty MUST use the fixed `L1` / `L2` / `L3` semantics, not Low / Medium / High labels.
+- Do not map difficulty directly from persona, starting position, convertibility ceiling, or resolution outcome.
+- `L1`: no proactive adversarial behavior. Adversarial moves are not required; any friction should arise naturally from the profile.
+- `L2`: self-resolving adversarial behavior. After an adversarial move, the user does not keep applying pressure regardless of whether the underlying problem is solved.
+- `L3`: persistent adversarial behavior. Unless the assistant handles it effectively, the user continues applying pressure or resistance.
+
 Remember difficulty is assigned at spec/profile stage, not build-pools stage."""
     return strip_markdown_fence(client.call(prompt))
 
@@ -260,6 +323,7 @@ Remember difficulty is assigned at spec/profile stage, not build-pools stage."""
 def assemble_gen_md(
     domain: str,
     prompt_analysis: str,
+    baseline_user_model: str,
     behavior_taxonomy: str,
     noise_rules: str,
     dimension_design: str,
@@ -267,89 +331,123 @@ def assemble_gen_md(
 ) -> str:
     return f"""# Domain Guide: {domain}
 
-This guide was derived from prompts and pools. Human review is required before
-full profile generation.
+This is the routing entry point for `{domain}` profile generation. Detailed analyses are kept in the companion Markdown files in this directory; this file preserves only the canonical decisions and generation contract needed by `generate-spec` and `generate-profiles`.
 
-## 1. Benchmark Objective
+Human review is required before full profile generation.
 
-See the prompt-derived objective and domain constraints below.
+## 1. Source Map
 
-{prompt_analysis}
+| Need | Read | Purpose |
+| --- | --- | --- |
+| Prompt/business objective, assistant flow, compliance boundaries, tools | `prompt_analysis.md` | Understand what the assistant is trying to do and what it must not violate. |
+| `user_starting_position`, `convertibility_ceiling`, coverage rules, spec field recommendations | `dimension_design.md` | Define benchmark dimensions and business-outcome labels. |
+| Default real-user state for outbound calls | `baseline_user_model.md` | Prevent overly cooperative, overly clear, test-like users. |
+| User behavior categories and combinations | `behavior_taxonomy.md` | Select realistic behavior patterns for profile design. |
+| Noise and friction usage | `noise_rules.md` | Add contextual noise without making noise artificial or overused. |
+| Safety/readiness audit | `guide_qc.md` | Review blocking issues and human-review checklist. |
 
-## 2. User Starting Position and Convertibility Ceiling
+## 2. Canonical Decisions
 
-{dimension_design}
+### Business Objective
 
-## 3. Difficulty Semantics
+Use `prompt_analysis.md` as the detailed source of truth for domain objectives, assistant flow, tools, and compliance boundaries.
 
-{DIFFICULTY_SEMANTICS}
+### Convertibility Ceiling
 
-## 4. Behavior Taxonomy
+`convertibility_ceiling` is judged from the business outcome perspective.
 
-{behavior_taxonomy}
+For CL, user refusal to repay belongs under Failure / Low-No Convertibility because collection did not succeed. This is independent from difficulty: a simple refusal can still be `L1` if the user does not proactively apply adversarial pressure.
 
-## 5. Noise and Friction Rules
+Use `dimension_design.md` as the detailed source of truth for outcome categories.
 
-{noise_rules}
+### Difficulty Semantics
 
-## 6. Profile Assembly Rules
+Difficulty is assigned at the `profile_spec` / profile stage, not during pool building.
+
+- `L1`: no proactive adversarial behavior. The profile does not require an adversarial move; normal friction may arise naturally from the user's situation, attention, or constraints.
+- `L2`: self-resolving adversarial behavior. After an adversarial move, the user does not keep applying pressure regardless of whether the underlying problem is solved.
+- `L3`: persistent adversarial behavior. Unless the assistant handles it effectively, the user continues applying pressure, resistance, interruption, accusation, privacy challenge, or refusal pattern.
+
+Do not map difficulty directly from `user_starting_position`, `convertibility_ceiling`, persona, or final business outcome.
+
+### Baseline User Model
+
+Apply `baseline_user_model.md` to every generated profile unless the spec explicitly overrides it. Users should generally have partial attention, limited patience, defensive trust posture, natural spoken language, and realistic interruption or disengagement tendencies.
+
+Do not add a fixed engagement-state-transition path. Different starting positions and behaviors should remain profile-specific.
+
+### Noise and Friction
+
+Use noise sparingly and only with context. Noise should be plausible for the user's situation and phone-call conditions; it should not be added only to make the task harder.
+
+Prefer typicalized or reviewed noise pools when available. Treat rule-based semantic/pragmatic noise candidates as candidates, not gold labels, unless they have been second-judged.
+
+## 3. Profile Assembly Rules
 
 - Generate motivation-driven profiles, not turn-by-turn scripts.
-- Preserve the profile spec fields exactly: `profile_id`, `prompt_id`,
-  `business`, `difficulty`, `user_starting_position` or legacy `intent_level`,
-  `convertibility_ceiling`, `identity`, `resolution_style`, and
-  `action_design`.
-- Use stage2 personas as stable user archetypes.
-- Use behavior_pool for realistic user actions and spoken phrasing.
-- Use noise_pool sparingly and only with enough context.
-- `task_instructions` should describe motives, triggers, reaction spectrum, and
-  persistence, not exact replies.
-- `behavioral_affordances` should state what the user tends to do, what they do
-  not do, hard boundaries, and how they soften or escalate.
+- Preserve the profile spec fields exactly: `profile_id`, `prompt_id`, `business`, `difficulty`, `user_starting_position` or legacy `intent_level`, `convertibility_ceiling`, `identity`, `resolution_style`, and `action_design`.
+- Use `stage2_typical_personas.jsonl` as stable user archetype evidence.
+- Use `behavior_pool.jsonl` for realistic user actions and spoken phrasing.
+- Use noise pools only with enough context.
+- Apply the baseline user model to every profile unless the spec explicitly overrides it.
+- `task_instructions` should describe motives, triggers, reaction spectrum, and persistence, not exact replies.
+- `behavioral_affordances` should state what the user tends to do, what they do not do, hard boundaries, and how they soften or escalate.
 - `behavior_examples` should be short spoken fragments in the target language.
 
-## 7. Identity Handling
+## 4. Identity Handling
 
-- `identity: {{}}` means no prompt variables need filling or the prompt already
-  mocks identity.
-- `identity: {{"field": true}}` means the generator should create a realistic
-  value for that placeholder.
+- `identity: {{}}` means no prompt variables need filling or the prompt already mocks identity.
+- `identity: {{"field": true}}` means the generator should create a realistic value for that placeholder.
 - Concrete identity values must be preserved.
 - Do not add extra identity fields that are not required by the prompt.
+- Before identity confirmation, the assistant must not disclose debt/account/product details.
+- Third-party or wrong-number cases must preserve privacy boundaries and should not be forced into payment collection.
 
-## 8. Output Profile Requirements
+## 5. Output Profile Requirements
 
-Native profiles may vary by domain, but they must be adaptable to runtime
-profiles with: `profile_id`, `prompt_id`, `identity`, `persona`, `situation`,
-`task_instructions`, `behavioral_affordances`, `behavior_examples`,
-`ending_expected`, and `meta`.
+Native profiles may vary by domain, but they must be adaptable to runtime profiles with:
 
-## 9. Quality Checklist
+- `profile_id`
+- `prompt_id`
+- `identity`
+- `persona`
+- `situation`
+- `task_instructions`
+- `behavioral_affordances`
+- `behavior_examples`
+- `ending_expected`
+- `meta`
+
+## 6. Quality Checklist
 
 - The profile follows the spec and does not contradict `action_design`.
 - The profile is plausible for the domain.
+- The profile reflects the baseline user model: partial attention, limited patience, natural spoken language, and defensiveness unless explicitly contradicted by the spec.
 - The profile is not scripted as "when the agent says X, say Y".
-- Difficulty follows the fixed L1/L2/L3 semantics.
-- `convertibility_ceiling` is respected.
+- Difficulty follows the fixed `L1` / `L2` / `L3` semantics.
+- `convertibility_ceiling` is respected and judged from the business outcome perspective.
 - User language and behavior are grounded in the pools.
 - Noise is contextual and not overused.
 - Identity placeholders are handled correctly.
+- Privacy and compliance boundaries are preserved.
 
-## 10. Common Failure Modes
+## 7. Common Failure Modes
 
+- Making users too attentive, patient, articulate, or test-like.
 - Overfitting to one prompt or business line.
 - Turning behavior examples into scripts.
+- Mapping difficulty directly to conversion outcome, persona, or starting position.
+- Treating refusal to repay as anything other than business failure in CL.
 - Making all difficult users angry instead of varying behavior types.
 - Letting L2 users sustain resistance like L3.
 - Letting L3 users soften without effective assistant handling.
-- Exceeding convertibility ceiling.
-- Adding facts, product benefits, or policy claims not present in prompts.
+- Exceeding `convertibility_ceiling`.
+- Adding facts, product benefits, threats, or policy claims not present in prompts.
 
-## 11. User Notes
+## 8. User Notes
 
 {notes or "(none)"}
 """
-
 
 def generate_guide_qc(client: ChatClient, gen_md: str) -> str:
     prompt = f"""Audit this generated benchmark domain guide.
@@ -365,6 +463,8 @@ Write Markdown:
 ## Blocking Issues
 ## Ambiguities
 ## Missing Inputs
+## Baseline User Model Checks
+Check whether the guide includes outbound-call defaults, domain-specific adaptation, non-transferable assumptions, and practical profile-generation implications.
 ## Recommended Human Review Checklist
 
 Be strict. Identify whether this guide is safe to use for smoke generation or full generation."""
@@ -428,6 +528,18 @@ def main() -> int:
     prompt_analysis = generate_prompt_analysis(client, args.domain, prompts, notes)
     (args.output / "prompt_analysis.md").write_text(prompt_analysis + "\n", encoding="utf-8")
 
+    LOG.info("generating baseline_user_model.md")
+    baseline_user_model = generate_baseline_user_model(
+        client,
+        args.domain,
+        prompts,
+        stage2,
+        behavior_pool,
+        noise_pool,
+        notes,
+    )
+    (args.output / "baseline_user_model.md").write_text(baseline_user_model + "\n", encoding="utf-8")
+
     LOG.info("generating behavior_taxonomy.md")
     behavior_taxonomy = generate_behavior_taxonomy(client, args.domain, stage2, behavior_pool)
     (args.output / "behavior_taxonomy.md").write_text(behavior_taxonomy + "\n", encoding="utf-8")
@@ -443,6 +555,7 @@ def main() -> int:
     gen_md = assemble_gen_md(
         args.domain,
         prompt_analysis,
+        baseline_user_model,
         behavior_taxonomy,
         noise_rules,
         dimension_design,
@@ -464,6 +577,7 @@ def main() -> int:
         "provider": args.provider,
         "outputs": [
             "prompt_analysis.md",
+            "baseline_user_model.md",
             "behavior_taxonomy.md",
             "noise_rules.md",
             "dimension_design.md",

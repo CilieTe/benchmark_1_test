@@ -1,0 +1,204 @@
+{
+  "source_candidates": "deleted temporary audit file: demo/noise_type_audit_full/noise_type_candidates.jsonl",
+  "source_dialogs": "demo/cl_pipeline_smoke/inputs/request_logs_dialog_schema_a_turn_gt6.jsonl",
+  "pool_file": "demo/cl_pipeline_smoke/noise_event_pool/noise_event_pool_all_types.jsonl",
+  "selection_policy": "deterministic balanced sample, max 20 rows per noise_type, prefer diverse source_dialog_id",
+  "max_per_type": 20,
+  "total_selected": 492,
+  "type_count": 25,
+  "family_counts_selected": {
+    "surface_noise": 120,
+    "semantic_noise": 140,
+    "pragmatic_noise": 232
+  },
+  "type_counts_selected": {
+    "silence": 20,
+    "minimal_feedback": 20,
+    "asr_garbled": 20,
+    "code_mixing": 20,
+    "overlap_interrupt": 20,
+    "truncated_utterance": 20,
+    "non_logical_speech": 20,
+    "contradictory_answer": 20,
+    "wrong_slot_answer": 20,
+    "referent_ambiguity": 20,
+    "temporal_ambiguity": 20,
+    "numeric_ambiguity": 20,
+    "role_confusion": 20,
+    "indirect_identity_correction": 20,
+    "implicit_confirmation": 20,
+    "implicit_refusal": 20,
+    "sarcastic_compliance": 12,
+    "hostile_cooperation": 20,
+    "third_party_boundary_probe": 20,
+    "privacy_boundary_probe": 20,
+    "payment_intent_ambiguous": 20,
+    "conditioned_agreement": 20,
+    "face_saving_evasion": 20,
+    "authority_deflection": 20,
+    "procedural_pushback": 20
+  },
+  "per_type": [
+    {
+      "noise_family": "surface_noise",
+      "noise_type": "silence",
+      "candidate_count": 1311,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "surface_noise",
+      "noise_type": "minimal_feedback",
+      "candidate_count": 1708,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "surface_noise",
+      "noise_type": "asr_garbled",
+      "candidate_count": 142,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "surface_noise",
+      "noise_type": "code_mixing",
+      "candidate_count": 1303,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "surface_noise",
+      "noise_type": "overlap_interrupt",
+      "candidate_count": 1421,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "surface_noise",
+      "noise_type": "truncated_utterance",
+      "candidate_count": 2379,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "semantic_noise",
+      "noise_type": "non_logical_speech",
+      "candidate_count": 184,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "semantic_noise",
+      "noise_type": "contradictory_answer",
+      "candidate_count": 281,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "semantic_noise",
+      "noise_type": "wrong_slot_answer",
+      "candidate_count": 1982,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "semantic_noise",
+      "noise_type": "referent_ambiguity",
+      "candidate_count": 361,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "semantic_noise",
+      "noise_type": "temporal_ambiguity",
+      "candidate_count": 715,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "semantic_noise",
+      "noise_type": "numeric_ambiguity",
+      "candidate_count": 674,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "semantic_noise",
+      "noise_type": "role_confusion",
+      "candidate_count": 58,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "pragmatic_noise",
+      "noise_type": "indirect_identity_correction",
+      "candidate_count": 75,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "pragmatic_noise",
+      "noise_type": "implicit_confirmation",
+      "candidate_count": 133,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "pragmatic_noise",
+      "noise_type": "implicit_refusal",
+      "candidate_count": 117,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "pragmatic_noise",
+      "noise_type": "sarcastic_compliance",
+      "candidate_count": 12,
+      "selected_count": 12
+    },
+    {
+      "noise_family": "pragmatic_noise",
+      "noise_type": "hostile_cooperation",
+      "candidate_count": 71,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "pragmatic_noise",
+      "noise_type": "third_party_boundary_probe",
+      "candidate_count": 31,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "pragmatic_noise",
+      "noise_type": "privacy_boundary_probe",
+      "candidate_count": 52,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "pragmatic_noise",
+      "noise_type": "payment_intent_ambiguous",
+      "candidate_count": 238,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "pragmatic_noise",
+      "noise_type": "conditioned_agreement",
+      "candidate_count": 258,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "pragmatic_noise",
+      "noise_type": "face_saving_evasion",
+      "candidate_count": 40,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "pragmatic_noise",
+      "noise_type": "authority_deflection",
+      "candidate_count": 100,
+      "selected_count": 20
+    },
+    {
+      "noise_family": "pragmatic_noise",
+      "noise_type": "procedural_pushback",
+      "candidate_count": 45,
+      "selected_count": 20
+    }
+  ],
+  "notes": [
+    "Counts are heuristic candidates, not gold labels.",
+    "semantic_noise and pragmatic_noise rows are marked needs_human_review=true.",
+    "topic_splice had no rule-based candidates in this full scan and is not included as a row.",
+    "Self-audit found clear false positives in several rule-based labels.",
+    "Use as candidate mining pool only until LLM/human second judgment is applied."
+  ],
+  "label_status": "candidate_only",
+  "quality_audit": "demo/cl_pipeline_smoke/noise_event_pool/noise_event_pool_self_audit.md",
+  "requires_second_judgment": true,
+  "do_not_use_as_gold": true
+}

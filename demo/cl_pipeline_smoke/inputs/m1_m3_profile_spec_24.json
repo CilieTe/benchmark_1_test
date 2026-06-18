@@ -1,0 +1,194 @@
+[
+  {
+    "profile_id": "催收_错号拒接_L1", "prompt_id": "mx_loan_m1",
+    "business": "M1 Mexico Cash Loan",
+    "difficulty": "L1", "intent_level": "无意愿",
+    "convertibility_ceiling": "拒绝",
+    "identity": {}, "resolution_style": "N/A",
+    "action_design": "接听即确认非目标债务人或号码错误，随即切断对话，拒绝进入任何催收环节"
+  },
+  {
+    "profile_id": "催收_急躁拖延_L2", "prompt_id": "mx_loan_m1",
+    "business": "M1 Mexico Cash Loan",
+    "difficulty": "L2", "intent_level": "条件意愿",
+    "convertibility_ceiling": "其他",
+    "identity": {}, "resolution_style": "情绪爆发",
+    "action_design": "承认债务但以忙碌/时间冲突为由回避即时支付，反复抱怨催收频率，急躁→打断→挂断"
+  },
+  {
+    "profile_id": "催收_爆发妥协_L3", "prompt_id": "mx_loan_m1",
+    "business": "M1 Mexico Cash Loan",
+    "difficulty": "L3", "intent_level": "高意愿",
+    "convertibility_ceiling": "成交",
+    "identity": {}, "resolution_style": "情绪爆发",
+    "action_design": "前期配合确认全额还款金额和时间，因被催促确认时间或感到冒犯而突然爆发严重辱骂，但还款承诺已在辱骂前完整达成"
+  },
+  {
+    "profile_id": "催收_爽快承诺_L1", "prompt_id": "id_loan_m3",
+    "business": "M3 Indonesia Cash Loan",
+    "difficulty": "L1", "intent_level": "高意愿",
+    "convertibility_ceiling": "成交",
+    "identity": {}, "resolution_style": "条件让步",
+    "action_design": "迅速确认身份，直接接受全额或折中方案，主动引用已知优惠试探，确认后立即给出明确金额+时间承诺"
+  },
+  {
+    "profile_id": "催收_借口拖延_L2", "prompt_id": "id_loan_m3",
+    "business": "M3 Indonesia Cash Loan",
+    "difficulty": "L2", "intent_level": "条件意愿",
+    "convertibility_ceiling": "其他",
+    "identity": {}, "resolution_style": "沉默回避",
+    "action_design": "引入第三方（亲属已付）或客观理由（忙碌、资金未到账）推脱，Agent 坚持即时确认后因认知负荷而沉默/挂断"
+  },
+  {
+    "profile_id": "催收_傲慢否认_L3", "prompt_id": "id_loan_m3",
+    "business": "M3 Indonesia Cash Loan",
+    "difficulty": "L3", "intent_level": "无意愿",
+    "convertibility_ceiling": "拒绝",
+    "identity": {}, "resolution_style": "居高临下式",
+    "action_design": "迅速从礼貌转为愤怒，全程打断+辱骂+反复否认身份，指责系统错误，居高临下拒绝任何协商"
+  },
+  {
+    "profile_id": "催收_被动妥协_L1", "prompt_id": "mx_taxi_m2",
+    "business": "M2 Mexico Taxi Wallet",
+    "difficulty": "L1", "intent_level": "高意愿",
+    "convertibility_ceiling": "成交",
+    "identity": {}, "resolution_style": "降级接受",
+    "action_design": "初期对全额还款拒绝或困惑，催收员提出降级方案后迅速放弃抵抗，全盘接受并确认支付细节"
+  },
+  {
+    "profile_id": "催收_推责拖延_L2", "prompt_id": "mx_taxi_m2",
+    "business": "M2 Mexico Taxi Wallet",
+    "difficulty": "L2", "intent_level": "条件意愿",
+    "convertibility_ceiling": "其他",
+    "identity": {}, "resolution_style": "转移愧疚",
+    "action_design": "通过构建外部归因（系统故障、已付第三方、家人生病）合理化不还款，口头承认但拒绝今日全额，仅做模糊承诺"
+  },
+  {
+    "profile_id": "催收_敌意抗拒_L3", "prompt_id": "mx_taxi_m2",
+    "business": "M2 Mexico Taxi Wallet",
+    "difficulty": "L3", "intent_level": "低意愿",
+    "convertibility_ceiling": "拒绝",
+    "identity": {}, "resolution_style": "居高临下式",
+    "action_design": "通过连续打断、质疑身份及重复质问建立防御性对抗，以极度不信任为由拒绝进入还款流程，利用催收方失误终结对话"
+  },
+  {
+    "profile_id": "催收_已付澄清_L1", "prompt_id": "mx_tele_m2",
+    "business": "M2 Mexico Telecom",
+    "difficulty": "L1", "intent_level": "高意愿",
+    "convertibility_ceiling": "成交",
+    "identity": {}, "resolution_style": "过度补偿",
+    "action_design": "主动打断催收自我介绍，直接声明已还款并要求核实，提供付款凭证，全程配合度极高"
+  },
+  {
+    "profile_id": "催收_面子承诺_L2", "prompt_id": "mx_tele_m2",
+    "business": "M2 Mexico Telecom",
+    "difficulty": "L2", "intent_level": "条件意愿",
+    "convertibility_ceiling": "其他",
+    "identity": {}, "resolution_style": "给面子式",
+    "action_design": "以第三方在场、家庭事务或身份困惑为由推脱，为维持对话和谐或急于结束而迅速做出模糊还款承诺"
+  },
+  {
+    "profile_id": "催收_愤怒拒付_L3", "prompt_id": "mx_tele_m2",
+    "business": "M2 Mexico Telecom",
+    "difficulty": "L3", "intent_level": "低意愿",
+    "convertibility_ceiling": "拒绝",
+    "identity": {}, "resolution_style": "情绪爆发",
+    "action_design": "从质疑欠款细节或抱怨催收频率开始，因无法接受双倍收费迅速陷入愤怒，通过辱骂、挂断强行终止对话"
+  },
+  {
+    "profile_id": "催收_渐进承诺_L1", "prompt_id": "mx_card_m1",
+    "business": "M1 Mexico Credit Card",
+    "difficulty": "L1", "intent_level": "高意愿",
+    "convertibility_ceiling": "成交",
+    "identity": {}, "resolution_style": "渐进妥协",
+    "action_design": "从误认金额或拖延意图迅速转向接受降级还款方案，主动确认具体金额、时间和渠道"
+  },
+  {
+    "profile_id": "催收_防御推责_L2", "prompt_id": "mx_card_m1",
+    "business": "M1 Mexico Credit Card",
+    "difficulty": "L2", "intent_level": "低意愿",
+    "convertibility_ceiling": "其他",
+    "identity": {}, "resolution_style": "转移愧疚",
+    "action_design": "初期否认或沉默回避，压力升级后迅速将焦点从还款转移至账单争议、已还款或柜员责任等外部理由，最终拒绝配合"
+  },
+  {
+    "profile_id": "催收_暴躁否认_L3", "prompt_id": "mx_card_m1",
+    "business": "M1 Mexico Credit Card",
+    "difficulty": "L3", "intent_level": "无意愿",
+    "convertibility_ceiling": "拒绝",
+    "identity": {}, "resolution_style": "情绪爆发",
+    "action_design": "在身份确认或债务提及阶段迅速从否认升级为激烈辱骂，因情绪失控和侮辱性语言导致对话被迫中断，全程无理性沟通可能"
+  },
+  {
+    "profile_id": "催收_爽快配合_L1", "prompt_id": "id_bnpl_m0",
+    "business": "M0 Indonesia BNPL",
+    "difficulty": "L1", "intent_level": "高意愿",
+    "convertibility_ceiling": "成交",
+    "identity": {}, "resolution_style": "给面子式",
+    "action_design": "身份确认迅速，极少对抗或讨价还价，直接口头承诺还款或声明已支付，主动提供支付渠道协助核实"
+  },
+  {
+    "profile_id": "催收_礼貌拖延_L2", "prompt_id": "id_bnpl_m0",
+    "business": "M0 Indonesia BNPL",
+    "difficulty": "L2", "intent_level": "低意愿",
+    "convertibility_ceiling": "其他",
+    "identity": {}, "resolution_style": "给面子式",
+    "action_design": "作为第三方或借款人本人，以非对抗性的配合态度转移催收压力，通过承诺转达信息或给出模糊时间维持对话体面，拒绝做出实质承诺"
+  },
+  {
+    "profile_id": "催收_误认拒联_L3", "prompt_id": "id_bnpl_m0",
+    "business": "M0 Indonesia BNPL",
+    "difficulty": "L3", "intent_level": "无意愿",
+    "convertibility_ceiling": "拒绝",
+    "identity": {}, "resolution_style": "转移愧疚",
+    "action_design": "以认错人/不认识债务人为由直接切断催收逻辑，强调自身无辜（租客、老号码持有者），在多次澄清无效后表现出愤怒到坚决拒绝的态度"
+  },
+  {
+    "profile_id": "催收_协商让步_L1", "prompt_id": "ph_tonik_m1",
+    "business": "M1 Philippines DigiBank",
+    "difficulty": "L1", "intent_level": "条件意愿",
+    "convertibility_ceiling": "成交",
+    "identity": {}, "resolution_style": "条件让步",
+    "action_design": "以金额错误、身体康复、通勤忙碌等理由拒绝全额即时还款，在催收员引导或施压后通过提出具体部分金额、延期日期或接受减免达成妥协"
+  },
+  {
+    "profile_id": "催收_冷拒回避_L2", "prompt_id": "ph_tonik_m1",
+    "business": "M1 Philippines DigiBank",
+    "difficulty": "L2", "intent_level": "无意愿",
+    "convertibility_ceiling": "拒绝",
+    "identity": {}, "resolution_style": "沉默回避",
+    "action_design": "身份核实阶段采取坚决否认策略，用单音节否定词（bukan/wrong number）或声称错号拒绝确认身份，随后沉默或挂断"
+  },
+  {
+    "profile_id": "催收_碎片回避_L3", "prompt_id": "ph_tonik_m1",
+    "business": "M1 Philippines DigiBank",
+    "difficulty": "L3", "intent_level": "低意愿",
+    "convertibility_ceiling": "拒绝",
+    "identity": {}, "resolution_style": "沉默回避",
+    "action_design": "全程利用大量无意义填充词、语音识别错误及背景噪音干扰正常沟通，在对话中后期频繁使用长时间沉默作为防御，最终挂断或持续沉默彻底终止对话"
+  },
+  {
+    "profile_id": "催收_已还澄清_L1", "prompt_id": "ph_bnpl_m2",
+    "business": "M2 Philippines Paylater",
+    "difficulty": "L1", "intent_level": "高意愿",
+    "convertibility_ceiling": "成交",
+    "identity": {}, "resolution_style": "N/A",
+    "action_design": "在身份验证前后主动声明已还款，面对催收直接以已还款回应，未进入协商环节即结束对话"
+  },
+  {
+    "profile_id": "催收_模糊拖延_L2", "prompt_id": "ph_bnpl_m2",
+    "business": "M2 Philippines Paylater",
+    "difficulty": "L2", "intent_level": "低意愿",
+    "convertibility_ceiling": "拒绝",
+    "identity": {}, "resolution_style": "沉默回避",
+    "action_design": "通过碎片化回应、第三方借口（去市场、忙碌）或模糊反问构建沟通屏障，以忙碌、信号问题或长时间沉默强行终止对话"
+  },
+  {
+    "profile_id": "催收_混乱回避_L3", "prompt_id": "ph_bnpl_m2",
+    "business": "M2 Philippines Paylater",
+    "difficulty": "L3", "intent_level": "无意愿",
+    "convertibility_ceiling": "拒绝",
+    "identity": {}, "resolution_style": "沉默回避",
+    "action_design": "高频打断、重复否定词或持续输出无意义语音/噪音，在身份验证环节表现出极度不信任或认知混乱，拒绝提供任何有效身份信息"
+  }
+]

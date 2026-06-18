@@ -122,6 +122,9 @@ Outputs:
 ```text
 stage1_per_conversation.jsonl
 noise_pool.jsonl
+noise_pool_typical.jsonl
+noise_event_pool_candidate.jsonl
+noise_event_pool_review.md
 behavior_pool.jsonl
 stage2_typical_personas.jsonl
 ```
@@ -165,6 +168,74 @@ Minimum schema:
 
 `context` is required. A noise fragment without context is often impossible to
 interpret.
+
+The raw pool preserves source evidence, but identical normalized `text` should
+be capped during collection, defaulting to 10 examples. This prevents high
+frequency placeholders such as `[Silence]` from dominating later sampling.
+
+### noise_pool_typical.jsonl
+
+Typicalized noise pool for downstream generation. It groups raw noise by
+`noise_type + normalized text`, keeps `occurrence_count`, representative
+`source_examples`, and a small number of `contexts`.
+
+When available, downstream spec/profile generation should prefer this file over
+the raw `noise_pool.jsonl`, falling back to raw noise only when the typicalized
+file is absent.
+
+### noise_event_pool_candidate.jsonl
+
+Candidate event-level noise pool with three families:
+
+- `surface_noise`: explicit phone-call artifacts such as silence, overlap
+  interruption, minimal feedback, ASR-like garbling, code mixing, and truncated
+  utterances.
+- `semantic_noise`: meaning-level ambiguity or mismatch candidates such as
+  non-logical speech, wrong-slot answers, referent/time/number ambiguity, and
+  contradiction.
+- `pragmatic_noise`: context-dependent user intent or boundary candidates such
+  as indirect identity correction, implicit refusal, privacy probes,
+  conditioned agreement, authority deflection, and procedural pushback.
+
+Rows are candidate labels, not gold labels. Semantic/pragmatic rows and surface
+rows with high false-positive risk (`asr_garbled`, `code_mixing`,
+`truncated_utterance`) require review before release-quality benchmark use.
+
+Default build behavior:
+
+- `surface_noise` is extracted with deterministic local rules.
+- `semantic_noise` and `pragmatic_noise` are mined by Chatdemo from dialog
+  context and written as candidates with `needs_human_review: true`.
+- `--noise-event-mode rules` uses local heuristic extraction for all families.
+- `--noise-event-mode off` disables event-pool generation.
+
+### build-pools repair policy
+
+Generation and extraction failures must be handled with targeted repair before
+any full rerun.
+
+- If `stage1_failed.jsonl` has rows, rerun only those `source_dialog_id`s, merge
+  them into `stage1_per_conversation.jsonl`, then rebuild dependent
+  `behavior_pool.jsonl`, `stage2_typical_personas.jsonl`, and
+  `build_pools_report.json`.
+- If `noise_event_failed.jsonl` has rows, rerun only those `source_dialog_id`s,
+  merge the returned rows into `noise_event_pool_candidate.jsonl`, re-apply the
+  per-type cap, then rewrite `noise_event_pool_review.md` and
+  `build_pools_report.json`.
+- If only `stage2_typical_personas.jsonl` failed or is empty, use
+  `build_pools.py --only-stage2` to repair it from existing stage1. Do not
+  rebuild noise/event pools for this case.
+- `build_pools.py --skip-stage1` reuses stage1 and rebuilds downstream pools. It
+  is useful when stage1 is trusted and pool extraction needs refreshing, but it
+  is not the minimal fix for a stage2-only failure.
+- Full rerun is reserved for global failures: wrong input file, wrong domain,
+  broken prompt/template, script bug affecting all records, or unavailable
+  dependency. One or a few model-format failures are not a full-rerun reason.
+
+### noise_event_pool_review.md
+
+Human-readable review note generated with the candidate event pool. It lists
+per-type counts and which types need human QC before use.
 
 ### behavior_pool.jsonl
 
@@ -227,6 +298,7 @@ Do not generate `gen.md` in one step. Derive and save intermediate analyses:
 ```text
 domain_guides/{domain}/
   prompt_analysis.md
+  baseline_user_model.md
   behavior_taxonomy.md
   noise_rules.md
   dimension_design.md
@@ -234,24 +306,30 @@ domain_guides/{domain}/
   guide_qc.md
 ```
 
+`gen.md` is a routing entry point, not a full concatenation of every
+intermediate analysis. It should keep a source map, canonical decisions, and the
+profile generation contract, while detailed analysis remains in the companion
+Markdown files.
+
 `gen.md` should use this stable structure:
 
 ```text
 # Domain Guide: {domain}
 
-## 1. Benchmark Objective
-## 2. Prompt Structure
-## 3. User Starting Position
-## 4. Convertibility Ceiling
-## 5. Difficulty Semantics
-## 6. Behavior Taxonomy
-## 7. Noise and Friction Rules
-## 8. Profile Assembly Rules
-## 9. Identity Handling
-## 10. Output Profile Requirements
-## 11. Quality Checklist
-## 12. Common Failure Modes
+## 1. Source Map
+## 2. Canonical Decisions
+## 3. Profile Assembly Rules
+## 4. Identity Handling
+## 5. Output Profile Requirements
+## 6. Quality Checklist
+## 7. Common Failure Modes
+## 8. User Notes
 ```
+
+`baseline_user_model.md` is mandatory and must be referenced by `gen.md`. It
+captures outbound-call defaults, domain-specific adaptation, non-transferable
+assumptions, and practical profile-generation implications. It prevents
+profiles from becoming overly attentive, patient, articulate, or test-like.
 
 Difficulty semantics are fixed and must be copied into every guide:
 
@@ -327,8 +405,17 @@ Default coverage rules:
 - `behavior_type` should be covered and reasonably balanced.
 - `difficulty` need not be fully covered for every prompt, but the whole file
   should have reasonable distribution.
+- `difficulty` is independent from `user_starting_position`,
+  `convertibility_ceiling`, persona, and final business outcome.
 - `L1` rows do not proactively adversarially challenge the agent.
-- `L2` and `L3` rows must contain explicit adversarial behavior.
+- `L2` rows may contain adversarial behavior, but it self-resolves; after an
+  adversarial move, the user does not keep applying pressure regardless of
+  whether the underlying issue is solved.
+- `L3` rows contain persistent adversarial behavior; unless the assistant
+  handles it effectively, the user continues applying pressure or resistance.
+- For CL, `convertibility_ceiling` is judged from the business outcome
+  perspective. User refusal to repay is Failure / Low-No Convertibility because
+  collection did not succeed.
 - Per-prompt row count may be user-specified; otherwise derive from coverage.
 
 ## generate-profiles
@@ -608,8 +695,9 @@ Checks:
 - Assistant did not keep talking after a clear terminal state.
 - User difficulty behavior is plausible:
   - `L1` has no proactive adversarial behavior.
-  - `L2` adversarial behavior resolves within one to two turns unless another
-    adversarial action starts.
+  - `L2` adversarial behavior self-resolves; after an adversarial move, the user
+    does not keep applying pressure regardless of whether the underlying issue
+    is solved.
   - `L3` does not self-resolve unless the assistant responds effectively.
 - Runtime profile constraints are visible in the dialog.
 - `convertibility_ceiling` is not exceeded. For example, a profile with an

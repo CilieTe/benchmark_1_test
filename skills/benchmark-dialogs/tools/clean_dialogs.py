@@ -35,6 +35,14 @@ CONV_MARKERS = [
     "#Role Definition",
     "# Role and Objective",
     "#Role and Objective",
+    "SYSTEM ROLE",
+    "Instrucciones de Personalidad y Objetivo",
+    "Instrucciones del Sistema",
+    "BACKGROUND INFORMATION",
+    "# ROLE",
+    "# Role",
+    "ROL Y PERSONALIDAD",
+    "System Role (LLM Instruction)",
 ]
 
 NER_MARKERS = [
